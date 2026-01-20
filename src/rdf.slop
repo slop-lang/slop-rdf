@@ -1,0 +1,366 @@
+(module rdf
+  (export
+    TermKind
+    Term
+    IRI
+    BlankNode
+    Literal
+    Triple
+    Graph
+    make-iri
+    make-blank
+    make-literal
+    term-kind
+    term-eq
+    make-triple
+    triple-subject
+    triple-predicate
+    triple-object
+    triple-eq
+    make-graph
+    graph-add
+    graph-remove
+    graph-size
+    graph-contains
+    graph-match
+    term-free
+    triple-free
+    graph-free)
+
+  (type TermKind (enum iri blank literal))
+
+  (type IRI (record (value String)))
+
+  (type BlankNodeId (Int 0 ..))
+
+  (type BlankNode (record (id BlankNodeId)))
+
+  (type Literal (record
+      (value String)
+      (datatype (Option String))
+      (lang (Option String))))
+
+  (type Term (union (iri IRI) (blank BlankNode) (literal Literal)))
+
+  (type Triple (record (subject Term) (predicate Term) (object Term)))
+
+  (type GraphSize (Int 0 ..))
+
+  (type Graph (record (triples (List Triple)) (size GraphSize))
+    (@invariant (== size (list-len triples))))
+
+  (fn make-iri ((in arena Arena) (in value String))
+    (@intent "Create an IRI term from a string")
+    (@spec ((Arena String) -> Term))
+    (@alloc arena)
+    (@pre (> (string-len value) 0))
+    (@post (match $result ((iri _) true) (_ false)))
+    (@example
+      ("http://example.org/foo")
+      ->
+      (iri (IRI "http://example.org/foo")))
+    (@example ("urn:isbn:0451450523") -> (iri (IRI "urn:isbn:0451450523")))
+    (union-new Term iri (record-new IRI (value value)))
+    :c-name
+    "rdf_make_iri")
+
+  (fn make-blank ((in arena Arena) (in id BlankNodeId))
+    (@intent "Create a blank node with given ID")
+    (@spec ((Arena BlankNodeId) -> Term))
+    (@alloc arena)
+    (@pre (>= id 0))
+    (@post (match $result ((blank _) true) (_ false)))
+    (@example (0) -> (blank (BlankNode 0)))
+    (@example (42) -> (blank (BlankNode 42)))
+    (union-new Term blank (record-new BlankNode (id id)))
+    :c-name
+    "rdf_make_blank")
+
+  (fn make-literal ((in arena Arena) (in value String) (in datatype (Option String)) (in lang (Option String)))
+    (@intent "Create a literal with optional datatype and language tag")
+    (@spec ((Arena String (Option String) (Option String)) -> Term))
+    (@alloc arena)
+    (@pre (>= (string-len value) 0))
+    (@post (match $result ((literal _) true) (_ false)))
+    (@example
+      ("hello" (none) (none))
+      ->
+      (literal (Literal "hello" (none) (none))))
+    (@example
+      ("42" (some "http://www.w3.org/2001/XMLSchema#integer") (none))
+      ->
+      (literal
+        (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none))))
+    (@example
+      ("bonjour" (none) (some "fr"))
+      ->
+      (literal (Literal "bonjour" (none) (some "fr"))))
+    (union-new
+      Term
+      'literal
+      (record-new Literal (value value) (datatype datatype) (lang lang)))
+    :c-name
+    "rdf_make_literal")
+
+  (fn term-kind ((in t Term))
+    (@intent "Get the kind discriminator of a term")
+    (@spec ((Term) -> TermKind))
+    (@pure)
+    (@example ((iri (IRI "http://example.org"))) -> 'iri)
+    (@example ((blank (BlankNode 1))) -> 'blank)
+    (@example ((literal (Literal "foo" (none) (none)))) -> 'literal)
+    (match t
+      ((iri _) 'iri)
+      ((blank _) 'blank)
+      ((literal _) 'literal))
+    :c-name
+    "rdf_term_kind")
+
+  (fn iri-eq ((in a IRI) (in b IRI))
+    (@intent "Check if two IRIs are equal by comparing their string values")
+    (@spec ((IRI IRI) -> Bool))
+    (@pure)
+    (@post (== $result (string-eq (. a value) (. b value))))
+    (@example ((IRI "http://a.org") (IRI "http://a.org")) -> true)
+    (@example ((IRI "http://a.org") (IRI "http://b.org")) -> false)
+    (string-eq (. a value) (. b value))
+    :c-name
+    "rdf_iri_eq")
+
+  (fn blank-eq ((in a BlankNode) (in b BlankNode))
+    (@intent "Check if two blank nodes are equal by comparing their IDs")
+    (@spec ((BlankNode BlankNode) -> Bool))
+    (@pure)
+    (@post (== $result (== (. a id) (. b id))))
+    (@example ((BlankNode 1) (BlankNode 1)) -> true)
+    (@example ((BlankNode 1) (BlankNode 2)) -> false)
+    (== (. a id) (. b id))
+    :c-name
+    "rdf_blank_eq")
+
+  (fn option-string-eq ((in a (Option String)) (in b (Option String)))
+    (@intent "Check if two optional strings are equal")
+    (@spec (((Option String) (Option String)) -> Bool))
+    (@pure)
+    (@example ((some "foo") (some "foo")) -> true)
+    (@example ((some "foo") (some "bar")) -> false)
+    (@example ((some "foo") (none)) -> false)
+    (@example ((none) (some "bar")) -> false)
+    (@example ((none) (none)) -> true)
+    (match a
+      ((some a-val)
+        (match b
+          ((some b-val) (string-eq a-val b-val))
+          ((none) false)))
+      ((none)
+        (match b
+          ((some _) false)
+          ((none) true))))
+    :c-name
+    "rdf_option_string_eq")
+
+  (fn literal-eq ((in a Literal) (in b Literal))
+    (@intent "Check if two literals are equal by comparing value, datatype, and language")
+    (@spec ((Literal Literal) -> Bool))
+    (@pure)
+    (@post (== $result (and (string-eq (. a value) (. b value))
+                            (and (option-string-eq (. a datatype) (. b datatype))
+                                 (option-string-eq (. a lang) (. b lang))))))
+    (and (string-eq (. a value) (. b value))
+         (and (option-string-eq (. a datatype) (. b datatype))
+              (option-string-eq (. a lang) (. b lang))))
+    :c-name
+    "rdf_literal_eq")
+
+  (fn term-eq ((in a Term) (in b Term))
+    (@intent "Check if two terms are equal")
+    (@spec ((Term Term) -> Bool))
+    (@pure)
+    (@post (== $result (== a b)))
+    (@example ((iri (IRI "http://a.org")) (iri (IRI "http://a.org"))) -> true)
+    (@example ((iri (IRI "http://a.org")) (iri (IRI "http://b.org"))) -> false)
+    (@example ((blank (BlankNode 1)) (blank (BlankNode 1))) -> true)
+    (@example ((blank (BlankNode 1)) (blank (BlankNode 2))) -> false)
+    (@example ((iri (IRI "http://a.org")) (blank (BlankNode 1))) -> false)
+    (match a
+      ((iri a-iri)
+        (match b
+          ((iri b-iri) (iri-eq a-iri b-iri))
+          (_ false)))
+      ((blank a-blank)
+        (match b
+          ((blank b-blank) (blank-eq a-blank b-blank))
+          (_ false)))
+      ((literal a-lit)
+        (match b
+          ((literal b-lit) (literal-eq a-lit b-lit))
+          (_ false))))
+    :c-name
+    "rdf_term_eq")
+
+  (fn make-triple ((in arena Arena) (in subject Term) (in predicate Term) (in object Term))
+    (@intent "Construct a triple from three terms")
+    (@spec ((Arena Term Term Term) -> Triple))
+    (@alloc arena)
+    (@post
+      (and
+        (term-eq (triple-subject $result) subject)
+        (term-eq (triple-predicate $result) predicate)
+        (term-eq (triple-object $result) object)))
+    (record-new Triple (subject subject) (predicate predicate) (object object))
+    :c-name
+    "rdf_make_triple")
+
+  (fn triple-subject ((in t Triple))
+    (@intent "Get the subject of a triple")
+    (@spec ((Triple) -> Term))
+    (@pure)
+    (@post (term-eq $result t.subject))
+    (. t subject)
+    :c-name
+    "rdf_triple_subject")
+
+  (fn triple-predicate ((in t Triple))
+    (@intent "Get the predicate of a triple")
+    (@spec ((Triple) -> Term))
+    (@pure)
+    (@post (term-eq $result t.predicate))
+    (. t predicate)
+    :c-name
+    "rdf_triple_predicate")
+
+  (fn triple-object ((in t Triple))
+    (@intent "Get the object of a triple")
+    (@spec ((Triple) -> Term))
+    (@pure)
+    (@post (term-eq $result t.object))
+    (. t object)
+    :c-name
+    "rdf_triple_object")
+
+  (fn triple-eq ((in a Triple) (in b Triple))
+    (@intent "Check if two triples are equal")
+    (@spec ((Triple Triple) -> Bool))
+    (@pure)
+    (@post
+      (==
+        $result
+        (and
+          (term-eq a.subject b.subject)
+          (term-eq a.predicate b.predicate)
+          (term-eq a.object b.object))))
+    (and
+      (term-eq (. a subject) (. b subject))
+      (and
+        (term-eq (. a predicate) (. b predicate))
+        (term-eq (. a object) (. b object))))
+    :c-name
+    "rdf_triple_eq")
+
+  (fn make-graph ((in arena Arena))
+    (@intent "Create an empty RDF graph")
+    (@spec ((Arena) -> Graph))
+    (@alloc arena)
+    (@post (== (graph-size $result) 0))
+    (@example () -> (Graph (list Triple) 0))
+    (record-new Graph (triples (list-new arena Triple)) (size 0))
+    :c-name
+    "rdf_make_graph")
+
+  (fn graph-add ((in arena Arena) (in g Graph) (in t Triple))
+    (@intent "Add a triple to the graph, returns new graph")
+    (@spec ((Arena Graph Triple) -> Graph))
+    (@alloc arena)
+    (@post (>= (graph-size $result) (graph-size g)))
+    (@post (graph-contains $result t))
+    (if (graph-contains g t)
+      g
+      (record-new
+        Graph
+        (triples (do (list-push (. g triples) t) (. g triples)))
+        (size (cast GraphSize (+ (. g size) 1)))))
+    :c-name
+    "rdf_graph_add")
+
+  (fn graph-remove ((in arena Arena) (in g Graph) (in t Triple))
+    (@intent "Remove a triple from the graph if present")
+    (@spec ((Arena Graph Triple) -> Graph))
+    (@alloc arena)
+    (@post (<= (graph-size $result) (graph-size g)))
+    (@post (not (graph-contains $result t)))
+    (let ((mut result (make-graph arena)))
+      (for-each (triple (. g triples))
+        (if (not (triple-eq triple t))
+          (set! result (graph-add arena result triple))))
+      result)
+    :c-name
+    "rdf_graph_remove")
+
+  (fn graph-size ((in g Graph))
+    (@intent "Return the number of triples in the graph")
+    (@spec ((Graph) -> GraphSize))
+    (@pure)
+    (@post (>= $result 0))
+    (@post (== $result (list-len g.triples)))
+    (. g size)
+    :c-name
+    "rdf_graph_size")
+
+  (fn graph-contains ((in g Graph) (in t Triple))
+    (@intent "Check if graph contains a specific triple")
+    (@spec ((Graph Triple) -> Bool))
+    (@pure)
+    (let ((mut found false))
+      (for-each (triple (. g triples))
+        (when (triple-eq triple t) (set! found true)))
+      found)
+    :c-name
+    "rdf_graph_contains")
+
+  (fn graph-match ((in arena Arena) (in g Graph) (in subject (Option Term)) (in predicate (Option Term)) (in object (Option Term)))
+    (@intent "Find triples matching pattern (none = wildcard)")
+    (@spec ((Arena Graph (Option Term) (Option Term) (Option Term)) -> Graph))
+    (@alloc arena)
+    (@post (<= (graph-size $result) (graph-size g)))
+    (let ((mut result (make-graph arena)))
+      (for-each (triple (. g triples))
+        (let ((s-match (match subject ((none) true) ((some s) (term-eq s (. triple subject))))))
+          (let ((p-match (match predicate ((none) true) ((some p) (term-eq p (. triple predicate))))))
+            (let ((o-match (match object ((none) true) ((some o) (term-eq o (. triple object))))))
+              (if (and s-match (and p-match o-match))
+                (set! result (graph-add arena result triple)))))))
+      result)
+    :c-name
+    "rdf_graph_match")
+
+  (fn term-free ((mut t (Ptr Term)))
+    (@intent "Free memory associated with a term")
+    (@spec (((Ptr Term)) -> Unit))
+    (@pre (!= t nil))
+    (match (deref t)
+      ((iri _) (do))
+      ((blank _) (do))
+      ((literal _) (do)))
+    :c-name
+    "rdf_term_free")
+
+  (fn triple-free ((mut t (Ptr Triple)))
+    (@intent "Free memory associated with a triple")
+    (@spec (((Ptr Triple)) -> Unit))
+    (@pre (!= t nil))
+    (do
+      (term-free (addr (. (deref t) subject)))
+      (term-free (addr (. (deref t) predicate)))
+      (term-free (addr (. (deref t) object))))
+    :c-name
+    "rdf_triple_free")
+
+  (fn graph-free ((mut g (Ptr Graph)))
+    (@intent "Free memory associated with a graph and all its triples")
+    (@spec (((Ptr Graph)) -> Unit))
+    (@pre (!= g nil))
+    (do
+      (for-each (triple (. (deref g) triples)) (triple-free (addr triple)))
+      (set! (deref g) size 0))
+    :c-name
+    "rdf_graph_free"))
