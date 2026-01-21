@@ -1,0 +1,111 @@
+(module index
+  (@doc "Indexed RDF graph with SPO/PSO/OSP indexes for efficient pattern matching")
+
+  (import rdf (Term Triple Graph term-eq triple-subject triple-predicate triple-object make-triple))
+
+  (export
+    TermMap
+    TripleIndex
+    IndexedGraph
+    indexed-graph-create
+    indexed-graph-add
+    indexed-graph-contains
+    indexed-graph-match
+    indexed-graph-size
+    indexed-graph-subjects
+    indexed-graph-objects)
+
+  ;; Map from Term to Set of Terms (for second-level index)
+  (type TermMap (Map Term (Set Term)))
+
+  ;; Map from Term to TermMap (for first-level index)
+  (type TermIndex (Map Term TermMap))
+
+  ;; Triple index with three access patterns
+  (type TripleIndex (record
+    (spo TermIndex)   ;; subject -> predicate -> objects
+    (pso TermIndex)   ;; predicate -> subject -> objects
+    (osp TermIndex))) ;; object -> subject -> predicates
+
+  ;; Graph with indexes for O(1) lookups
+  (type IndexedGraph (record
+    (triples (List Triple))
+    (index TripleIndex)
+    (size (Int 0 ..))))
+
+  (fn indexed-graph-create ((in arena Arena))
+    (@intent "Create an empty indexed graph")
+    (@spec ((Arena) -> IndexedGraph))
+    (@alloc arena)
+    (@post (== (. $result size) 0))
+    (hole IndexedGraph "create empty IndexedGraph with empty maps for spo/pso/osp"
+      :complexity tier-2
+      :context (arena map-new list-new)
+      :required (map-new list-new))
+    :c-name "rdf_indexed_graph_create")
+
+  (fn indexed-graph-add ((in arena Arena) (mut g IndexedGraph) (in t Triple))
+    (@intent "Add a triple to the indexed graph, updating all three indexes")
+    (@spec ((Arena IndexedGraph Triple) -> IndexedGraph))
+    (@alloc arena)
+    (@pre (>= (. g size) 0))
+    (@post (>= (. $result size) (. g size)))
+    (@post (indexed-graph-contains $result t))
+    (hole IndexedGraph "add triple to triples list and update spo/pso/osp indexes"
+      :complexity tier-3
+      :context (arena g t triple-subject triple-predicate triple-object map-get map-put list-push)
+      :required (triple-subject triple-predicate triple-object))
+    :c-name "rdf_indexed_graph_add")
+
+  (fn indexed-graph-contains ((in g IndexedGraph) (in t Triple))
+    (@intent "Check if graph contains a specific triple using SPO index")
+    (@spec ((IndexedGraph Triple) -> Bool))
+    (@pure)
+    (@pre (>= (. g size) 0))
+    (hole Bool "lookup in spo index: subject -> predicate -> check object in set"
+      :complexity tier-2
+      :context (g t triple-subject triple-predicate triple-object map-get map-has term-eq)
+      :required (triple-subject triple-predicate triple-object map-get))
+    :c-name "rdf_indexed_graph_contains")
+
+  (fn indexed-graph-match ((in arena Arena) (in g IndexedGraph) (in subj (Option Term)) (in pred (Option Term)) (in obj (Option Term)))
+    (@intent "Find all triples matching pattern using optimal index")
+    (@spec ((Arena IndexedGraph (Option Term) (Option Term) (Option Term)) -> (List Triple)))
+    (@alloc arena)
+    (@pre (>= (. g size) 0))
+    (@post (>= (list-len $result) 0))
+    (hole (List Triple) "select best index based on bound components: SPO if subject bound, PSO if predicate bound, OSP if object bound, scan if none bound"
+      :complexity tier-4
+      :context (arena g subj pred obj map-get map-keys list-new list-push make-triple term-eq)
+      :required (map-get))
+    :c-name "rdf_indexed_graph_match")
+
+  (fn indexed-graph-size ((in g IndexedGraph))
+    (@intent "Return the number of triples in the graph")
+    (@spec ((IndexedGraph) -> (Int 0 ..)))
+    (@pure)
+    (@post (== $result (. g size)))
+    (. g size)
+    :c-name "rdf_indexed_graph_size")
+
+  (fn indexed-graph-subjects ((in arena Arena) (in g IndexedGraph) (in pred Term) (in obj Term))
+    (@intent "Find all subjects with given predicate and object")
+    (@spec ((Arena IndexedGraph Term Term) -> (List Term)))
+    (@alloc arena)
+    (@pre (>= (. g size) 0))
+    (hole (List Term) "use OSP index: lookup object -> iterate subjects -> check predicate"
+      :complexity tier-3
+      :context (arena g pred obj map-get map-keys list-new list-push term-eq)
+      :required (map-get))
+    :c-name "rdf_indexed_graph_subjects")
+
+  (fn indexed-graph-objects ((in arena Arena) (in g IndexedGraph) (in subj Term) (in pred Term))
+    (@intent "Find all objects with given subject and predicate")
+    (@spec ((Arena IndexedGraph Term Term) -> (List Term)))
+    (@alloc arena)
+    (@pre (>= (. g size) 0))
+    (hole (List Term) "use SPO index: lookup subject -> lookup predicate -> return object set as list"
+      :complexity tier-2
+      :context (arena g subj pred map-get list-new list-push)
+      :required (map-get))
+    :c-name "rdf_indexed_graph_objects"))

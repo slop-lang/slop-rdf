@@ -40,7 +40,7 @@
       (datatype (Option String))
       (lang (Option String))))
 
-  (type Term (union (iri IRI) (blank BlankNode) (literal Literal)))
+  (type Term (union (term-iri IRI) (term-blank BlankNode) (term-literal Literal)))
 
   (type Triple (record (subject Term) (predicate Term) (object Term)))
 
@@ -54,13 +54,13 @@
     (@spec ((Arena String) -> Term))
     (@alloc arena)
     (@pre (> (string-len value) 0))
-    (@post (match $result ((iri _) true) (_ false)))
+    (@post (match $result ((term-iri _) true) (_ false)))
     (@example
       ("http://example.org/foo")
       ->
-      (iri (IRI "http://example.org/foo")))
-    (@example ("urn:isbn:0451450523") -> (iri (IRI "urn:isbn:0451450523")))
-    (union-new Term iri (record-new IRI (value value)))
+      (term-iri (IRI "http://example.org/foo")))
+    (@example ("urn:isbn:0451450523") -> (term-iri (IRI "urn:isbn:0451450523")))
+    (union-new Term term-iri (record-new IRI (value value)))
     :c-name
     "rdf_make_iri")
 
@@ -69,10 +69,10 @@
     (@spec ((Arena BlankNodeId) -> Term))
     (@alloc arena)
     (@pre (>= id 0))
-    (@post (match $result ((blank _) true) (_ false)))
-    (@example (0) -> (blank (BlankNode 0)))
-    (@example (42) -> (blank (BlankNode 42)))
-    (union-new Term blank (record-new BlankNode (id id)))
+    (@post (match $result ((term-blank _) true) (_ false)))
+    (@example (0) -> (term-blank (BlankNode 0)))
+    (@example (42) -> (term-blank (BlankNode 42)))
+    (union-new Term term-blank (record-new BlankNode (id id)))
     :c-name
     "rdf_make_blank")
 
@@ -81,23 +81,23 @@
     (@spec ((Arena String (Option String) (Option String)) -> Term))
     (@alloc arena)
     (@pre (>= (string-len value) 0))
-    (@post (match $result ((literal _) true) (_ false)))
+    (@post (match $result ((term-literal _) true) (_ false)))
     (@example
       ("hello" (none) (none))
       ->
-      (literal (Literal "hello" (none) (none))))
+      (term-literal (Literal "hello" (none) (none))))
     (@example
       ("42" (some "http://www.w3.org/2001/XMLSchema#integer") (none))
       ->
-      (literal
+      (term-literal
         (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none))))
     (@example
       ("bonjour" (none) (some "fr"))
       ->
-      (literal (Literal "bonjour" (none) (some "fr"))))
+      (term-literal (Literal "bonjour" (none) (some "fr"))))
     (union-new
       Term
-      'literal
+      'term-literal
       (record-new Literal (value value) (datatype datatype) (lang lang)))
     :c-name
     "rdf_make_literal")
@@ -106,13 +106,13 @@
     (@intent "Get the kind discriminator of a term")
     (@spec ((Term) -> TermKind))
     (@pure)
-    (@example ((iri (IRI "http://example.org"))) -> 'iri)
-    (@example ((blank (BlankNode 1))) -> 'blank)
-    (@example ((literal (Literal "foo" (none) (none)))) -> 'literal)
+    (@example ((term-iri (IRI "http://example.org"))) -> 'iri)
+    (@example ((term-blank (BlankNode 1))) -> 'blank)
+    (@example ((term-literal (Literal "foo" (none) (none)))) -> 'literal)
     (match t
-      ((iri _) 'iri)
-      ((blank _) 'blank)
-      ((literal _) 'literal))
+      ((term-iri _) 'iri)
+      ((term-blank _) 'blank)
+      ((term-literal _) 'literal))
     :c-name
     "rdf_term_kind")
 
@@ -177,23 +177,23 @@
     (@spec ((Term Term) -> Bool))
     (@pure)
     (@post (== $result (== a b)))
-    (@example ((iri (IRI "http://a.org")) (iri (IRI "http://a.org"))) -> true)
-    (@example ((iri (IRI "http://a.org")) (iri (IRI "http://b.org"))) -> false)
-    (@example ((blank (BlankNode 1)) (blank (BlankNode 1))) -> true)
-    (@example ((blank (BlankNode 1)) (blank (BlankNode 2))) -> false)
-    (@example ((iri (IRI "http://a.org")) (blank (BlankNode 1))) -> false)
+    (@example ((term-iri (IRI "http://a.org")) (term-iri (IRI "http://a.org"))) -> true)
+    (@example ((term-iri (IRI "http://a.org")) (term-iri (IRI "http://b.org"))) -> false)
+    (@example ((term-blank (BlankNode 1)) (term-blank (BlankNode 1))) -> true)
+    (@example ((term-blank (BlankNode 1)) (term-blank (BlankNode 2))) -> false)
+    (@example ((term-iri (IRI "http://a.org")) (term-blank (BlankNode 1))) -> false)
     (match a
-      ((iri a-iri)
+      ((term-iri a-iri)
         (match b
-          ((iri b-iri) (iri-eq a-iri b-iri))
+          ((term-iri b-iri) (iri-eq a-iri b-iri))
           (_ false)))
-      ((blank a-blank)
+      ((term-blank a-blank)
         (match b
-          ((blank b-blank) (blank-eq a-blank b-blank))
+          ((term-blank b-blank) (blank-eq a-blank b-blank))
           (_ false)))
-      ((literal a-lit)
+      ((term-literal a-lit)
         (match b
-          ((literal b-lit) (literal-eq a-lit b-lit))
+          ((term-literal b-lit) (literal-eq a-lit b-lit))
           (_ false))))
     :c-name
     "rdf_term_eq")
@@ -338,9 +338,9 @@
     (@spec (((Ptr Term)) -> Unit))
     (@pre (!= t nil))
     (match (deref t)
-      ((iri _) (do))
-      ((blank _) (do))
-      ((literal _) (do)))
+      ((term-iri _) (do))
+      ((term-blank _) (do))
+      ((term-literal _) (do)))
     :c-name
     "rdf_term_free")
 

@@ -1,0 +1,193 @@
+(module xsd
+  (@doc "XSD datatype parsing and value-space equality for RDF literals")
+
+  (import rdf (Literal))
+  (import strlib (parse-int parse-float))
+  (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE))
+
+  (export
+    XsdType
+    XsdValue
+    XsdError
+    xsd-parse-type
+    xsd-parse-value
+    xsd-values-equal
+    xsd-types-compatible
+    literal-values-equal)
+
+  ;; Supported XSD types (Phase 1: core types only)
+  (type XsdType (enum
+    xsd-string
+    xsd-integer
+    xsd-decimal
+    xsd-float
+    xsd-double
+    xsd-boolean
+    xsd-unknown))
+
+  ;; Parsed XSD value in value space
+  (type XsdValue (union
+    (xsd-string-val String)
+    (xsd-integer-val Int)
+    (xsd-decimal-val Float)
+    (xsd-float-val F32)
+    (xsd-double-val Float)
+    (xsd-boolean-val Bool)
+    (xsd-unknown-val String)))
+
+  ;; Parse errors
+  (type XsdError (enum
+    invalid-lexical-form
+    unsupported-datatype
+    type-mismatch))
+
+  (fn xsd-parse-type ((in datatype-iri String))
+    (@intent "Parse XSD datatype IRI to enum, returning xsd-unknown for unrecognized types")
+    (@spec ((String) -> XsdType))
+    (@pure)
+    (@example ("http://www.w3.org/2001/XMLSchema#string") -> 'xsd-string)
+    (@example ("http://www.w3.org/2001/XMLSchema#integer") -> 'xsd-integer)
+    (@example ("http://www.w3.org/2001/XMLSchema#boolean") -> 'xsd-boolean)
+    (@example ("http://example.org/custom") -> 'xsd-unknown)
+    (cond
+      ((string-eq datatype-iri XSD_STRING) 'xsd-string)
+      ((string-eq datatype-iri XSD_INTEGER) 'xsd-integer)
+      ((string-eq datatype-iri XSD_BOOLEAN) 'xsd-boolean)
+      ((string-eq datatype-iri XSD_DECIMAL) 'xsd-decimal)
+      ((string-eq datatype-iri XSD_FLOAT) 'xsd-float)
+      ((string-eq datatype-iri XSD_DOUBLE) 'xsd-double)
+      (else 'xsd-unknown))
+    :c-name "xsd_parse_type")
+
+  (fn xsd-parse-value ((in arena Arena) (in lexical String) (in dtype XsdType))
+    (@intent "Parse lexical form to typed value according to XSD datatype")
+    (@spec ((Arena String XsdType) -> (Result XsdValue XsdError)))
+    (@alloc arena)
+    (@example ("hello" 'xsd-string) -> (ok (xsd-string-val "hello")))
+    (@example ("42" 'xsd-integer) -> (ok (xsd-integer-val 42)))
+    (@example ("true" 'xsd-boolean) -> (ok (xsd-boolean-val true)))
+    (@example ("false" 'xsd-boolean) -> (ok (xsd-boolean-val false)))
+    (@example ("3.14" 'xsd-decimal) -> (ok (xsd-decimal-val 3.14)))
+    (@example ("not-a-number" 'xsd-integer) -> (error 'invalid-lexical-form))
+    (match dtype
+      (xsd-string
+        (ok (xsd-string-val lexical)))
+      (xsd-integer
+        (match (parse-int lexical)
+          ((ok val) (ok (xsd-integer-val val)))
+          ((error _) (error 'invalid-lexical-form))))
+      (xsd-boolean
+        (if (string-eq lexical "true")
+          (ok (xsd-boolean-val true))
+          (if (string-eq lexical "false")
+            (ok (xsd-boolean-val false))
+            (error 'invalid-lexical-form))))
+      (xsd-decimal
+        (match (parse-float lexical)
+          ((ok val) (ok (xsd-decimal-val val)))
+          ((error _) (error 'invalid-lexical-form))))
+      (xsd-float
+        (match (parse-float lexical)
+          ((ok val) (ok (xsd-float-val (cast F32 val))))
+          ((error _) (error 'invalid-lexical-form))))
+      (xsd-double
+        (match (parse-float lexical)
+          ((ok val) (ok (xsd-double-val val)))
+          ((error _) (error 'invalid-lexical-form))))
+      (xsd-unknown
+        (ok (xsd-unknown-val lexical))))
+    :c-name "xsd_parse_value")
+
+  (fn xsd-values-equal ((in a XsdValue) (in b XsdValue))
+    (@intent "Compare two XSD values for equality in value space")
+    (@spec ((XsdValue XsdValue) -> Bool))
+    (@pure)
+    (@example ((xsd-integer-val 42) (xsd-integer-val 42)) -> true)
+    (@example ((xsd-integer-val 42) (xsd-decimal-val 42.0)) -> true)
+    (@example ((xsd-string-val "foo") (xsd-string-val "foo")) -> true)
+    (@example ((xsd-string-val "foo") (xsd-string-val "bar")) -> false)
+    (@example ((xsd-boolean-val true) (xsd-boolean-val true)) -> true)
+    (match a
+      ((xsd-string-val s1)
+       (match b
+         ((xsd-string-val s2) (string-eq s1 s2))
+         (_ false)))
+      ((xsd-integer-val i1)
+       (match b
+         ((xsd-integer-val i2) (== i1 i2))
+         ((xsd-decimal-val d2) (== (cast Float i1) d2))
+         ((xsd-float-val f2) (== (cast Float i1) (cast Float f2)))
+         ((xsd-double-val d2) (== (cast Float i1) d2))
+         (_ false)))
+      ((xsd-decimal-val d1)
+       (match b
+         ((xsd-integer-val i2) (== d1 (cast Float i2)))
+         ((xsd-decimal-val d2) (== d1 d2))
+         ((xsd-float-val f2) (== d1 (cast Float f2)))
+         ((xsd-double-val d2) (== d1 d2))
+         (_ false)))
+      ((xsd-float-val f1)
+       (match b
+         ((xsd-integer-val i2) (== (cast Float f1) (cast Float i2)))
+         ((xsd-decimal-val d2) (== (cast Float f1) d2))
+         ((xsd-float-val f2) (== f1 f2))
+         ((xsd-double-val d2) (== (cast Float f1) d2))
+         (_ false)))
+      ((xsd-double-val d1)
+       (match b
+         ((xsd-integer-val i2) (== d1 (cast Float i2)))
+         ((xsd-decimal-val d2) (== d1 d2))
+         ((xsd-float-val f2) (== d1 (cast Float f2)))
+         ((xsd-double-val d2) (== d1 d2))
+         (_ false)))
+      ((xsd-boolean-val b1)
+       (match b
+         ((xsd-boolean-val b2) (== b1 b2))
+         (_ false)))
+      ((xsd-unknown-val u1)
+       (match b
+         ((xsd-unknown-val u2) (string-eq u1 u2))
+         (_ false))))
+    :c-name "xsd_values_equal")
+
+  (fn xsd-types-compatible ((in t1 XsdType) (in t2 XsdType))
+    (@intent "Check if two XSD types are comparable (same type or both numeric)")
+    (@spec ((XsdType XsdType) -> Bool))
+    (@pure)
+    (@example ('xsd-integer 'xsd-integer) -> true)
+    (@example ('xsd-integer 'xsd-decimal) -> true)
+    (@example ('xsd-string 'xsd-integer) -> false)
+    (@example ('xsd-float 'xsd-double) -> true)
+    (or (== t1 t2)
+        (and (or (== t1 'xsd-integer) (== t1 'xsd-decimal) (== t1 'xsd-float) (== t1 'xsd-double))
+             (or (== t2 'xsd-integer) (== t2 'xsd-decimal) (== t2 'xsd-float) (== t2 'xsd-double))))
+    :c-name "xsd_types_compatible")
+
+  (fn literal-values-equal ((in arena Arena) (in a Literal) (in b Literal))
+    (@intent "Compare two RDF literals for value-space equality considering datatypes")
+    (@spec ((Arena Literal Literal) -> (Result Bool XsdError)))
+    (@alloc arena)
+    (match (. a lang)
+      ((some lang-a)
+       (match (. b lang)
+         ((some lang-b)
+          (if (string-eq lang-a lang-b)
+            (ok (string-eq (. a value) (. b value)))
+            (ok false)))
+         ((none) (ok false))))
+      ((none)
+       (match (. a datatype)
+         ((some dt-a)
+          (match (. b datatype)
+            ((some dt-b)
+             (let ((type-a (xsd-parse-type dt-a)))
+               (let ((type-b (xsd-parse-type dt-b)))
+                 (let ((val-a (? (xsd-parse-value arena (. a value) type-a))))
+                   (let ((val-b (? (xsd-parse-value arena (. b value) type-b))))
+                     (ok (xsd-values-equal val-a val-b)))))))
+            ((none) (ok false))))
+         ((none)
+          (match (. b datatype)
+            ((some dt-b) (ok false))
+            ((none) (ok (string-eq (. a value) (. b value)))))))))
+    :c-name "xsd_literal_values_equal"))

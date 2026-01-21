@@ -1,0 +1,644 @@
+(module vocab
+  (@doc "Standard RDF vocabulary IRIs: RDF, RDFS, XSD, OWL, DC, DCTERMS, SKOS, FOAF, GEO, GEOSPARQL, SCHEMA, PROV, SHACL")
+
+  (export
+    ;; RDF namespace
+    RDF_NS RDF_TYPE RDF_FIRST RDF_REST RDF_NIL RDF_PROPERTY
+    RDF_STATEMENT RDF_SUBJECT RDF_PREDICATE RDF_OBJECT RDF_LIST
+    RDF_LANG_STRING RDF_HTML RDF_XML_LITERAL
+    ;; RDFS namespace
+    RDFS_NS RDFS_RESOURCE RDFS_CLASS RDFS_LITERAL RDFS_DATATYPE
+    RDFS_SUBCLASS_OF RDFS_SUBPROPERTY_OF RDFS_DOMAIN RDFS_RANGE
+    RDFS_LABEL RDFS_COMMENT RDFS_MEMBER RDFS_SEE_ALSO RDFS_IS_DEFINED_BY
+    RDFS_CONTAINER RDFS_CONTAINER_MEMBERSHIP_PROPERTY
+    ;; XSD namespace
+    XSD_NS XSD_STRING XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE
+    XSD_INTEGER XSD_LONG XSD_INT XSD_SHORT XSD_BYTE
+    XSD_NON_NEGATIVE_INTEGER XSD_NON_POSITIVE_INTEGER
+    XSD_POSITIVE_INTEGER XSD_NEGATIVE_INTEGER
+    XSD_UNSIGNED_LONG XSD_UNSIGNED_INT XSD_UNSIGNED_SHORT XSD_UNSIGNED_BYTE
+    XSD_DATE_TIME XSD_DATE_TIME_STAMP XSD_DATE XSD_TIME
+    XSD_G_YEAR XSD_G_MONTH XSD_G_DAY XSD_G_YEAR_MONTH XSD_G_MONTH_DAY
+    XSD_DURATION XSD_DAY_TIME_DURATION XSD_YEAR_MONTH_DURATION
+    XSD_HEX_BINARY XSD_BASE64_BINARY XSD_ANY_URI
+    XSD_NORMALIZED_STRING XSD_TOKEN XSD_NAME XSD_NCNAME XSD_LANGUAGE
+    ;; OWL namespace
+    OWL_NS OWL_THING OWL_NOTHING OWL_CLASS OWL_NAMED_INDIVIDUAL
+    OWL_SAME_AS OWL_DIFFERENT_FROM OWL_ALL_DIFFERENT OWL_DISTINCT_MEMBERS
+    OWL_OBJECT_PROPERTY OWL_DATATYPE_PROPERTY OWL_ANNOTATION_PROPERTY
+    OWL_FUNCTIONAL_PROPERTY OWL_INVERSE_FUNCTIONAL_PROPERTY
+    OWL_TRANSITIVE_PROPERTY OWL_SYMMETRIC_PROPERTY OWL_ASYMMETRIC_PROPERTY
+    OWL_REFLEXIVE_PROPERTY OWL_IRREFLEXIVE_PROPERTY
+    OWL_INVERSE_OF OWL_EQUIVALENT_CLASS OWL_EQUIVALENT_PROPERTY
+    OWL_DISJOINT_WITH OWL_PROPERTY_DISJOINT_WITH OWL_ALL_DISJOINT_CLASSES
+    OWL_ALL_DISJOINT_PROPERTIES OWL_COMPLEMENT_OF
+    OWL_RESTRICTION OWL_ON_PROPERTY OWL_ON_CLASS OWL_ON_DATA_RANGE
+    OWL_SOME_VALUES_FROM OWL_ALL_VALUES_FROM OWL_HAS_VALUE OWL_HAS_SELF
+    OWL_MIN_CARDINALITY OWL_MAX_CARDINALITY OWL_CARDINALITY
+    OWL_MIN_QUALIFIED_CARDINALITY OWL_MAX_QUALIFIED_CARDINALITY OWL_QUALIFIED_CARDINALITY
+    OWL_INTERSECTION_OF OWL_UNION_OF OWL_ONE_OF OWL_MEMBERS
+    OWL_PROPERTY_CHAIN_AXIOM OWL_HAS_KEY
+    OWL_NEGATIVE_PROPERTY_ASSERTION OWL_SOURCE_INDIVIDUAL
+    OWL_ASSERTION_PROPERTY OWL_TARGET_INDIVIDUAL OWL_TARGET_VALUE
+    OWL_DATATYPE_COMPLEMENT_OF OWL_ON_DATATYPE OWL_WITH_RESTRICTIONS
+    OWL_ONTOLOGY OWL_IMPORTS OWL_VERSION_IRI
+    ;; DC namespace (Dublin Core Elements)
+    DC_NS DC_TITLE DC_CREATOR DC_SUBJECT DC_DESCRIPTION DC_PUBLISHER
+    DC_CONTRIBUTOR DC_DATE DC_TYPE DC_FORMAT DC_IDENTIFIER DC_SOURCE
+    DC_LANGUAGE DC_RELATION DC_COVERAGE DC_RIGHTS
+    ;; DCTERMS namespace (Dublin Core Terms)
+    DCTERMS_NS DCTERMS_TITLE DCTERMS_CREATOR DCTERMS_SUBJECT DCTERMS_DESCRIPTION
+    DCTERMS_PUBLISHER DCTERMS_CONTRIBUTOR DCTERMS_DATE DCTERMS_TYPE
+    DCTERMS_FORMAT DCTERMS_IDENTIFIER DCTERMS_SOURCE DCTERMS_LANGUAGE
+    DCTERMS_RELATION DCTERMS_COVERAGE DCTERMS_RIGHTS
+    DCTERMS_CREATED DCTERMS_MODIFIED DCTERMS_ISSUED DCTERMS_VALID
+    DCTERMS_ABSTRACT DCTERMS_LICENSE DCTERMS_CONFORMS_TO
+    DCTERMS_HAS_PART DCTERMS_IS_PART_OF DCTERMS_REFERENCES DCTERMS_IS_REFERENCED_BY
+    ;; SKOS namespace
+    SKOS_NS SKOS_CONCEPT SKOS_CONCEPT_SCHEME SKOS_COLLECTION SKOS_ORDERED_COLLECTION
+    SKOS_IN_SCHEME SKOS_HAS_TOP_CONCEPT SKOS_TOP_CONCEPT_OF
+    SKOS_PREF_LABEL SKOS_ALT_LABEL SKOS_HIDDEN_LABEL
+    SKOS_DEFINITION SKOS_NOTE SKOS_SCOPE_NOTE SKOS_EXAMPLE SKOS_HISTORY_NOTE
+    SKOS_EDITORIAL_NOTE SKOS_CHANGE_NOTE
+    SKOS_BROADER SKOS_NARROWER SKOS_RELATED
+    SKOS_BROADER_TRANSITIVE SKOS_NARROWER_TRANSITIVE
+    SKOS_EXACT_MATCH SKOS_CLOSE_MATCH SKOS_BROAD_MATCH SKOS_NARROW_MATCH SKOS_RELATED_MATCH
+    SKOS_MEMBER SKOS_MEMBER_LIST SKOS_NOTATION
+    ;; FOAF namespace
+    FOAF_NS FOAF_PERSON FOAF_AGENT FOAF_ORGANIZATION FOAF_GROUP
+    FOAF_NAME FOAF_GIVEN_NAME FOAF_FAMILY_NAME FOAF_NICK FOAF_TITLE
+    FOAF_MBOX FOAF_MBOX_SHA1SUM FOAF_HOMEPAGE FOAF_WEBLOG FOAF_ONLINE_ACCOUNT
+    FOAF_ACCOUNT_NAME FOAF_ACCOUNT_SERVICE_HOMEPAGE
+    FOAF_IMG FOAF_DEPICTION FOAF_DEPICTS FOAF_THUMBNAIL
+    FOAF_KNOWS FOAF_INTEREST FOAF_TOPIC FOAF_TOPIC_INTEREST
+    FOAF_MEMBER FOAF_BASED_NEAR FOAF_AGE FOAF_BIRTHDAY FOAF_GENDER
+    FOAF_DOCUMENT FOAF_IMAGE FOAF_PROJECT FOAF_PRIMARY_TOPIC FOAF_IS_PRIMARY_TOPIC_OF
+    ;; W3C Basic Geo namespace
+    GEO_NS GEO_POINT GEO_LAT GEO_LONG GEO_ALT GEO_LAT_LONG
+    GEO_SPATIAL_THING
+    ;; GeoSPARQL namespace (OGC)
+    GEOSPARQL_NS GEOSPARQL_FEATURE GEOSPARQL_GEOMETRY GEOSPARQL_SPATIAL_OBJECT
+    GEOSPARQL_HAS_GEOMETRY GEOSPARQL_HAS_DEFAULT_GEOMETRY GEOSPARQL_HAS_BOUNDING_BOX
+    GEOSPARQL_AS_WKT GEOSPARQL_AS_GML GEOSPARQL_AS_GEO_JSON GEOSPARQL_AS_KML
+    GEOSPARQL_WKT_LITERAL GEOSPARQL_GML_LITERAL GEOSPARQL_GEO_JSON_LITERAL GEOSPARQL_KML_LITERAL
+    GEOSPARQL_SF_EQUALS GEOSPARQL_SF_DISJOINT GEOSPARQL_SF_INTERSECTS
+    GEOSPARQL_SF_TOUCHES GEOSPARQL_SF_CROSSES GEOSPARQL_SF_WITHIN
+    GEOSPARQL_SF_CONTAINS GEOSPARQL_SF_OVERLAPS
+    GEOSPARQL_EH_EQUALS GEOSPARQL_EH_DISJOINT GEOSPARQL_EH_MEET
+    GEOSPARQL_EH_OVERLAP GEOSPARQL_EH_COVERS GEOSPARQL_EH_COVERED_BY
+    GEOSPARQL_EH_INSIDE GEOSPARQL_EH_CONTAINS
+    GEOSPARQL_RCC8_EQ GEOSPARQL_RCC8_DC GEOSPARQL_RCC8_EC
+    GEOSPARQL_RCC8_PO GEOSPARQL_RCC8_TPPI GEOSPARQL_RCC8_TPP
+    GEOSPARQL_RCC8_NTPPI GEOSPARQL_RCC8_NTPP
+    ;; Schema.org namespace (common subset)
+    SCHEMA_NS SCHEMA_THING SCHEMA_PERSON SCHEMA_ORGANIZATION SCHEMA_PLACE
+    SCHEMA_EVENT SCHEMA_CREATIVE_WORK SCHEMA_ACTION SCHEMA_PRODUCT
+    SCHEMA_NAME SCHEMA_DESCRIPTION SCHEMA_URL SCHEMA_IMAGE SCHEMA_IDENTIFIER
+    SCHEMA_DATE_CREATED SCHEMA_DATE_MODIFIED SCHEMA_DATE_PUBLISHED
+    SCHEMA_AUTHOR SCHEMA_CREATOR SCHEMA_PUBLISHER
+    SCHEMA_ADDRESS SCHEMA_EMAIL SCHEMA_TELEPHONE
+    SCHEMA_GEO SCHEMA_LATITUDE SCHEMA_LONGITUDE
+    SCHEMA_START_DATE SCHEMA_END_DATE SCHEMA_LOCATION
+    SCHEMA_SAME_AS SCHEMA_PART_OF SCHEMA_HAS_PART
+    ;; PROV namespace (W3C Provenance)
+    PROV_NS PROV_ENTITY PROV_ACTIVITY PROV_AGENT
+    PROV_WAS_GENERATED_BY PROV_WAS_DERIVED_FROM PROV_WAS_ATTRIBUTED_TO
+    PROV_WAS_ASSOCIATED_WITH PROV_ACTED_ON_BEHALF_OF
+    PROV_USED PROV_GENERATED PROV_STARTED_AT_TIME PROV_ENDED_AT_TIME
+    PROV_AT_TIME PROV_AT_LOCATION PROV_VALUE
+    PROV_QUALIFIED_GENERATION PROV_QUALIFIED_DERIVATION PROV_QUALIFIED_USAGE
+    PROV_GENERATION PROV_USAGE PROV_DERIVATION
+    PROV_PRIMARY_SOURCE PROV_QUOTATION PROV_REVISION
+    PROV_HAD_PRIMARY_SOURCE PROV_WAS_QUOTED_FROM PROV_WAS_REVISION_OF
+    ;; SHACL namespace
+    SHACL_NS SHACL_SHAPE SHACL_NODE_SHAPE SHACL_PROPERTY_SHAPE
+    SHACL_TARGET_CLASS SHACL_TARGET_NODE SHACL_TARGET_SUBJECTS_OF SHACL_TARGET_OBJECTS_OF
+    SHACL_PATH SHACL_INVERSE_PATH SHACL_ALTERNATIVE_PATH SHACL_ZERO_OR_MORE_PATH SHACL_ONE_OR_MORE_PATH
+    SHACL_CLASS SHACL_DATATYPE SHACL_NODE_KIND
+    SHACL_MIN_COUNT SHACL_MAX_COUNT
+    SHACL_MIN_EXCLUSIVE SHACL_MAX_EXCLUSIVE SHACL_MIN_INCLUSIVE SHACL_MAX_INCLUSIVE
+    SHACL_MIN_LENGTH SHACL_MAX_LENGTH SHACL_PATTERN SHACL_FLAGS
+    SHACL_EQUALS SHACL_DISJOINT SHACL_LESS_THAN SHACL_LESS_THAN_OR_EQUALS
+    SHACL_NOT SHACL_AND SHACL_OR SHACL_XONE
+    SHACL_NODE SHACL_PROPERTY SHACL_QUALIFIED_VALUE_SHAPE
+    SHACL_QUALIFIED_MIN_COUNT SHACL_QUALIFIED_MAX_COUNT
+    SHACL_CLOSED SHACL_IGNORED_PROPERTIES SHACL_HAS_VALUE SHACL_IN
+    SHACL_IRI SHACL_BLANK_NODE SHACL_LITERAL SHACL_BLANK_NODE_OR_IRI SHACL_BLANK_NODE_OR_LITERAL SHACL_IRI_OR_LITERAL
+    SHACL_VALIDATION_REPORT SHACL_CONFORMS SHACL_RESULT
+    SHACL_VALIDATION_RESULT SHACL_FOCUS_NODE SHACL_RESULT_PATH
+    SHACL_RESULT_SEVERITY SHACL_SOURCE_CONSTRAINT_COMPONENT SHACL_SOURCE_SHAPE
+    SHACL_SEVERITY SHACL_VIOLATION SHACL_WARNING SHACL_INFO)
+
+  ;; ============================================================================
+  ;; RDF Namespace - http://www.w3.org/1999/02/22-rdf-syntax-ns#
+  ;; ============================================================================
+  (const RDF_NS String "http://www.w3.org/1999/02/22-rdf-syntax-ns#")
+  (const RDF_TYPE String "http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+  (const RDF_FIRST String "http://www.w3.org/1999/02/22-rdf-syntax-ns#first")
+  (const RDF_REST String "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest")
+  (const RDF_NIL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")
+  (const RDF_PROPERTY String "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property")
+  (const RDF_STATEMENT String "http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement")
+  (const RDF_SUBJECT String "http://www.w3.org/1999/02/22-rdf-syntax-ns#subject")
+  (const RDF_PREDICATE String "http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate")
+  (const RDF_OBJECT String "http://www.w3.org/1999/02/22-rdf-syntax-ns#object")
+  (const RDF_LIST String "http://www.w3.org/1999/02/22-rdf-syntax-ns#List")
+  (const RDF_LANG_STRING String "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString")
+  (const RDF_HTML String "http://www.w3.org/1999/02/22-rdf-syntax-ns#HTML")
+  (const RDF_XML_LITERAL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral")
+
+  ;; ============================================================================
+  ;; RDFS Namespace - http://www.w3.org/2000/01/rdf-schema#
+  ;; ============================================================================
+  (const RDFS_NS String "http://www.w3.org/2000/01/rdf-schema#")
+  (const RDFS_RESOURCE String "http://www.w3.org/2000/01/rdf-schema#Resource")
+  (const RDFS_CLASS String "http://www.w3.org/2000/01/rdf-schema#Class")
+  (const RDFS_LITERAL String "http://www.w3.org/2000/01/rdf-schema#Literal")
+  (const RDFS_DATATYPE String "http://www.w3.org/2000/01/rdf-schema#Datatype")
+  (const RDFS_SUBCLASS_OF String "http://www.w3.org/2000/01/rdf-schema#subClassOf")
+  (const RDFS_SUBPROPERTY_OF String "http://www.w3.org/2000/01/rdf-schema#subPropertyOf")
+  (const RDFS_DOMAIN String "http://www.w3.org/2000/01/rdf-schema#domain")
+  (const RDFS_RANGE String "http://www.w3.org/2000/01/rdf-schema#range")
+  (const RDFS_LABEL String "http://www.w3.org/2000/01/rdf-schema#label")
+  (const RDFS_COMMENT String "http://www.w3.org/2000/01/rdf-schema#comment")
+  (const RDFS_MEMBER String "http://www.w3.org/2000/01/rdf-schema#member")
+  (const RDFS_SEE_ALSO String "http://www.w3.org/2000/01/rdf-schema#seeAlso")
+  (const RDFS_IS_DEFINED_BY String "http://www.w3.org/2000/01/rdf-schema#isDefinedBy")
+  (const RDFS_CONTAINER String "http://www.w3.org/2000/01/rdf-schema#Container")
+  (const RDFS_CONTAINER_MEMBERSHIP_PROPERTY String "http://www.w3.org/2000/01/rdf-schema#ContainerMembershipProperty")
+
+  ;; ============================================================================
+  ;; XSD Namespace - http://www.w3.org/2001/XMLSchema#
+  ;; ============================================================================
+  (const XSD_NS String "http://www.w3.org/2001/XMLSchema#")
+  (const XSD_STRING String "http://www.w3.org/2001/XMLSchema#string")
+  (const XSD_NORMALIZED_STRING String "http://www.w3.org/2001/XMLSchema#normalizedString")
+  (const XSD_TOKEN String "http://www.w3.org/2001/XMLSchema#token")
+  (const XSD_NAME String "http://www.w3.org/2001/XMLSchema#Name")
+  (const XSD_NCNAME String "http://www.w3.org/2001/XMLSchema#NCName")
+  (const XSD_LANGUAGE String "http://www.w3.org/2001/XMLSchema#language")
+  (const XSD_BOOLEAN String "http://www.w3.org/2001/XMLSchema#boolean")
+  (const XSD_DECIMAL String "http://www.w3.org/2001/XMLSchema#decimal")
+  (const XSD_FLOAT String "http://www.w3.org/2001/XMLSchema#float")
+  (const XSD_DOUBLE String "http://www.w3.org/2001/XMLSchema#double")
+  (const XSD_INTEGER String "http://www.w3.org/2001/XMLSchema#integer")
+  (const XSD_LONG String "http://www.w3.org/2001/XMLSchema#long")
+  (const XSD_INT String "http://www.w3.org/2001/XMLSchema#int")
+  (const XSD_SHORT String "http://www.w3.org/2001/XMLSchema#short")
+  (const XSD_BYTE String "http://www.w3.org/2001/XMLSchema#byte")
+  (const XSD_NON_NEGATIVE_INTEGER String "http://www.w3.org/2001/XMLSchema#nonNegativeInteger")
+  (const XSD_NON_POSITIVE_INTEGER String "http://www.w3.org/2001/XMLSchema#nonPositiveInteger")
+  (const XSD_POSITIVE_INTEGER String "http://www.w3.org/2001/XMLSchema#positiveInteger")
+  (const XSD_NEGATIVE_INTEGER String "http://www.w3.org/2001/XMLSchema#negativeInteger")
+  (const XSD_UNSIGNED_LONG String "http://www.w3.org/2001/XMLSchema#unsignedLong")
+  (const XSD_UNSIGNED_INT String "http://www.w3.org/2001/XMLSchema#unsignedInt")
+  (const XSD_UNSIGNED_SHORT String "http://www.w3.org/2001/XMLSchema#unsignedShort")
+  (const XSD_UNSIGNED_BYTE String "http://www.w3.org/2001/XMLSchema#unsignedByte")
+  (const XSD_DATE_TIME String "http://www.w3.org/2001/XMLSchema#dateTime")
+  (const XSD_DATE_TIME_STAMP String "http://www.w3.org/2001/XMLSchema#dateTimeStamp")
+  (const XSD_DATE String "http://www.w3.org/2001/XMLSchema#date")
+  (const XSD_TIME String "http://www.w3.org/2001/XMLSchema#time")
+  (const XSD_G_YEAR String "http://www.w3.org/2001/XMLSchema#gYear")
+  (const XSD_G_MONTH String "http://www.w3.org/2001/XMLSchema#gMonth")
+  (const XSD_G_DAY String "http://www.w3.org/2001/XMLSchema#gDay")
+  (const XSD_G_YEAR_MONTH String "http://www.w3.org/2001/XMLSchema#gYearMonth")
+  (const XSD_G_MONTH_DAY String "http://www.w3.org/2001/XMLSchema#gMonthDay")
+  (const XSD_DURATION String "http://www.w3.org/2001/XMLSchema#duration")
+  (const XSD_DAY_TIME_DURATION String "http://www.w3.org/2001/XMLSchema#dayTimeDuration")
+  (const XSD_YEAR_MONTH_DURATION String "http://www.w3.org/2001/XMLSchema#yearMonthDuration")
+  (const XSD_HEX_BINARY String "http://www.w3.org/2001/XMLSchema#hexBinary")
+  (const XSD_BASE64_BINARY String "http://www.w3.org/2001/XMLSchema#base64Binary")
+  (const XSD_ANY_URI String "http://www.w3.org/2001/XMLSchema#anyURI")
+
+  ;; ============================================================================
+  ;; OWL Namespace - http://www.w3.org/2002/07/owl#
+  ;; ============================================================================
+  (const OWL_NS String "http://www.w3.org/2002/07/owl#")
+  ;; Classes
+  (const OWL_THING String "http://www.w3.org/2002/07/owl#Thing")
+  (const OWL_NOTHING String "http://www.w3.org/2002/07/owl#Nothing")
+  (const OWL_CLASS String "http://www.w3.org/2002/07/owl#Class")
+  (const OWL_NAMED_INDIVIDUAL String "http://www.w3.org/2002/07/owl#NamedIndividual")
+  ;; Equality
+  (const OWL_SAME_AS String "http://www.w3.org/2002/07/owl#sameAs")
+  (const OWL_DIFFERENT_FROM String "http://www.w3.org/2002/07/owl#differentFrom")
+  (const OWL_ALL_DIFFERENT String "http://www.w3.org/2002/07/owl#AllDifferent")
+  (const OWL_DISTINCT_MEMBERS String "http://www.w3.org/2002/07/owl#distinctMembers")
+  ;; Property types
+  (const OWL_OBJECT_PROPERTY String "http://www.w3.org/2002/07/owl#ObjectProperty")
+  (const OWL_DATATYPE_PROPERTY String "http://www.w3.org/2002/07/owl#DatatypeProperty")
+  (const OWL_ANNOTATION_PROPERTY String "http://www.w3.org/2002/07/owl#AnnotationProperty")
+  (const OWL_FUNCTIONAL_PROPERTY String "http://www.w3.org/2002/07/owl#FunctionalProperty")
+  (const OWL_INVERSE_FUNCTIONAL_PROPERTY String "http://www.w3.org/2002/07/owl#InverseFunctionalProperty")
+  (const OWL_TRANSITIVE_PROPERTY String "http://www.w3.org/2002/07/owl#TransitiveProperty")
+  (const OWL_SYMMETRIC_PROPERTY String "http://www.w3.org/2002/07/owl#SymmetricProperty")
+  (const OWL_ASYMMETRIC_PROPERTY String "http://www.w3.org/2002/07/owl#AsymmetricProperty")
+  (const OWL_REFLEXIVE_PROPERTY String "http://www.w3.org/2002/07/owl#ReflexiveProperty")
+  (const OWL_IRREFLEXIVE_PROPERTY String "http://www.w3.org/2002/07/owl#IrreflexiveProperty")
+  ;; Property relationships
+  (const OWL_INVERSE_OF String "http://www.w3.org/2002/07/owl#inverseOf")
+  (const OWL_EQUIVALENT_CLASS String "http://www.w3.org/2002/07/owl#equivalentClass")
+  (const OWL_EQUIVALENT_PROPERTY String "http://www.w3.org/2002/07/owl#equivalentProperty")
+  (const OWL_DISJOINT_WITH String "http://www.w3.org/2002/07/owl#disjointWith")
+  (const OWL_PROPERTY_DISJOINT_WITH String "http://www.w3.org/2002/07/owl#propertyDisjointWith")
+  (const OWL_ALL_DISJOINT_CLASSES String "http://www.w3.org/2002/07/owl#AllDisjointClasses")
+  (const OWL_ALL_DISJOINT_PROPERTIES String "http://www.w3.org/2002/07/owl#AllDisjointProperties")
+  (const OWL_COMPLEMENT_OF String "http://www.w3.org/2002/07/owl#complementOf")
+  ;; Restrictions
+  (const OWL_RESTRICTION String "http://www.w3.org/2002/07/owl#Restriction")
+  (const OWL_ON_PROPERTY String "http://www.w3.org/2002/07/owl#onProperty")
+  (const OWL_ON_CLASS String "http://www.w3.org/2002/07/owl#onClass")
+  (const OWL_ON_DATA_RANGE String "http://www.w3.org/2002/07/owl#onDataRange")
+  (const OWL_SOME_VALUES_FROM String "http://www.w3.org/2002/07/owl#someValuesFrom")
+  (const OWL_ALL_VALUES_FROM String "http://www.w3.org/2002/07/owl#allValuesFrom")
+  (const OWL_HAS_VALUE String "http://www.w3.org/2002/07/owl#hasValue")
+  (const OWL_HAS_SELF String "http://www.w3.org/2002/07/owl#hasSelf")
+  (const OWL_MIN_CARDINALITY String "http://www.w3.org/2002/07/owl#minCardinality")
+  (const OWL_MAX_CARDINALITY String "http://www.w3.org/2002/07/owl#maxCardinality")
+  (const OWL_CARDINALITY String "http://www.w3.org/2002/07/owl#cardinality")
+  (const OWL_MIN_QUALIFIED_CARDINALITY String "http://www.w3.org/2002/07/owl#minQualifiedCardinality")
+  (const OWL_MAX_QUALIFIED_CARDINALITY String "http://www.w3.org/2002/07/owl#maxQualifiedCardinality")
+  (const OWL_QUALIFIED_CARDINALITY String "http://www.w3.org/2002/07/owl#qualifiedCardinality")
+  ;; Collections
+  (const OWL_INTERSECTION_OF String "http://www.w3.org/2002/07/owl#intersectionOf")
+  (const OWL_UNION_OF String "http://www.w3.org/2002/07/owl#unionOf")
+  (const OWL_ONE_OF String "http://www.w3.org/2002/07/owl#oneOf")
+  (const OWL_MEMBERS String "http://www.w3.org/2002/07/owl#members")
+  ;; Axioms
+  (const OWL_PROPERTY_CHAIN_AXIOM String "http://www.w3.org/2002/07/owl#propertyChainAxiom")
+  (const OWL_HAS_KEY String "http://www.w3.org/2002/07/owl#hasKey")
+  ;; Negative property assertions
+  (const OWL_NEGATIVE_PROPERTY_ASSERTION String "http://www.w3.org/2002/07/owl#NegativePropertyAssertion")
+  (const OWL_SOURCE_INDIVIDUAL String "http://www.w3.org/2002/07/owl#sourceIndividual")
+  (const OWL_ASSERTION_PROPERTY String "http://www.w3.org/2002/07/owl#assertionProperty")
+  (const OWL_TARGET_INDIVIDUAL String "http://www.w3.org/2002/07/owl#targetIndividual")
+  (const OWL_TARGET_VALUE String "http://www.w3.org/2002/07/owl#targetValue")
+  ;; Datatype restrictions
+  (const OWL_DATATYPE_COMPLEMENT_OF String "http://www.w3.org/2002/07/owl#datatypeComplementOf")
+  (const OWL_ON_DATATYPE String "http://www.w3.org/2002/07/owl#onDatatype")
+  (const OWL_WITH_RESTRICTIONS String "http://www.w3.org/2002/07/owl#withRestrictions")
+  ;; Ontology
+  (const OWL_ONTOLOGY String "http://www.w3.org/2002/07/owl#Ontology")
+  (const OWL_IMPORTS String "http://www.w3.org/2002/07/owl#imports")
+  (const OWL_VERSION_IRI String "http://www.w3.org/2002/07/owl#versionIRI")
+
+  ;; ============================================================================
+  ;; DC Namespace (Dublin Core Elements) - http://purl.org/dc/elements/1.1/
+  ;; ============================================================================
+  (const DC_NS String "http://purl.org/dc/elements/1.1/")
+  (const DC_TITLE String "http://purl.org/dc/elements/1.1/title")
+  (const DC_CREATOR String "http://purl.org/dc/elements/1.1/creator")
+  (const DC_SUBJECT String "http://purl.org/dc/elements/1.1/subject")
+  (const DC_DESCRIPTION String "http://purl.org/dc/elements/1.1/description")
+  (const DC_PUBLISHER String "http://purl.org/dc/elements/1.1/publisher")
+  (const DC_CONTRIBUTOR String "http://purl.org/dc/elements/1.1/contributor")
+  (const DC_DATE String "http://purl.org/dc/elements/1.1/date")
+  (const DC_TYPE String "http://purl.org/dc/elements/1.1/type")
+  (const DC_FORMAT String "http://purl.org/dc/elements/1.1/format")
+  (const DC_IDENTIFIER String "http://purl.org/dc/elements/1.1/identifier")
+  (const DC_SOURCE String "http://purl.org/dc/elements/1.1/source")
+  (const DC_LANGUAGE String "http://purl.org/dc/elements/1.1/language")
+  (const DC_RELATION String "http://purl.org/dc/elements/1.1/relation")
+  (const DC_COVERAGE String "http://purl.org/dc/elements/1.1/coverage")
+  (const DC_RIGHTS String "http://purl.org/dc/elements/1.1/rights")
+
+  ;; ============================================================================
+  ;; DCTERMS Namespace (Dublin Core Terms) - http://purl.org/dc/terms/
+  ;; ============================================================================
+  (const DCTERMS_NS String "http://purl.org/dc/terms/")
+  (const DCTERMS_TITLE String "http://purl.org/dc/terms/title")
+  (const DCTERMS_CREATOR String "http://purl.org/dc/terms/creator")
+  (const DCTERMS_SUBJECT String "http://purl.org/dc/terms/subject")
+  (const DCTERMS_DESCRIPTION String "http://purl.org/dc/terms/description")
+  (const DCTERMS_PUBLISHER String "http://purl.org/dc/terms/publisher")
+  (const DCTERMS_CONTRIBUTOR String "http://purl.org/dc/terms/contributor")
+  (const DCTERMS_DATE String "http://purl.org/dc/terms/date")
+  (const DCTERMS_TYPE String "http://purl.org/dc/terms/type")
+  (const DCTERMS_FORMAT String "http://purl.org/dc/terms/format")
+  (const DCTERMS_IDENTIFIER String "http://purl.org/dc/terms/identifier")
+  (const DCTERMS_SOURCE String "http://purl.org/dc/terms/source")
+  (const DCTERMS_LANGUAGE String "http://purl.org/dc/terms/language")
+  (const DCTERMS_RELATION String "http://purl.org/dc/terms/relation")
+  (const DCTERMS_COVERAGE String "http://purl.org/dc/terms/coverage")
+  (const DCTERMS_RIGHTS String "http://purl.org/dc/terms/rights")
+  (const DCTERMS_CREATED String "http://purl.org/dc/terms/created")
+  (const DCTERMS_MODIFIED String "http://purl.org/dc/terms/modified")
+  (const DCTERMS_ISSUED String "http://purl.org/dc/terms/issued")
+  (const DCTERMS_VALID String "http://purl.org/dc/terms/valid")
+  (const DCTERMS_ABSTRACT String "http://purl.org/dc/terms/abstract")
+  (const DCTERMS_LICENSE String "http://purl.org/dc/terms/license")
+  (const DCTERMS_CONFORMS_TO String "http://purl.org/dc/terms/conformsTo")
+  (const DCTERMS_HAS_PART String "http://purl.org/dc/terms/hasPart")
+  (const DCTERMS_IS_PART_OF String "http://purl.org/dc/terms/isPartOf")
+  (const DCTERMS_REFERENCES String "http://purl.org/dc/terms/references")
+  (const DCTERMS_IS_REFERENCED_BY String "http://purl.org/dc/terms/isReferencedBy")
+
+  ;; ============================================================================
+  ;; SKOS Namespace - http://www.w3.org/2004/02/skos/core#
+  ;; ============================================================================
+  (const SKOS_NS String "http://www.w3.org/2004/02/skos/core#")
+  ;; Classes
+  (const SKOS_CONCEPT String "http://www.w3.org/2004/02/skos/core#Concept")
+  (const SKOS_CONCEPT_SCHEME String "http://www.w3.org/2004/02/skos/core#ConceptScheme")
+  (const SKOS_COLLECTION String "http://www.w3.org/2004/02/skos/core#Collection")
+  (const SKOS_ORDERED_COLLECTION String "http://www.w3.org/2004/02/skos/core#OrderedCollection")
+  ;; Concept scheme
+  (const SKOS_IN_SCHEME String "http://www.w3.org/2004/02/skos/core#inScheme")
+  (const SKOS_HAS_TOP_CONCEPT String "http://www.w3.org/2004/02/skos/core#hasTopConcept")
+  (const SKOS_TOP_CONCEPT_OF String "http://www.w3.org/2004/02/skos/core#topConceptOf")
+  ;; Labels
+  (const SKOS_PREF_LABEL String "http://www.w3.org/2004/02/skos/core#prefLabel")
+  (const SKOS_ALT_LABEL String "http://www.w3.org/2004/02/skos/core#altLabel")
+  (const SKOS_HIDDEN_LABEL String "http://www.w3.org/2004/02/skos/core#hiddenLabel")
+  ;; Documentation
+  (const SKOS_DEFINITION String "http://www.w3.org/2004/02/skos/core#definition")
+  (const SKOS_NOTE String "http://www.w3.org/2004/02/skos/core#note")
+  (const SKOS_SCOPE_NOTE String "http://www.w3.org/2004/02/skos/core#scopeNote")
+  (const SKOS_EXAMPLE String "http://www.w3.org/2004/02/skos/core#example")
+  (const SKOS_HISTORY_NOTE String "http://www.w3.org/2004/02/skos/core#historyNote")
+  (const SKOS_EDITORIAL_NOTE String "http://www.w3.org/2004/02/skos/core#editorialNote")
+  (const SKOS_CHANGE_NOTE String "http://www.w3.org/2004/02/skos/core#changeNote")
+  ;; Semantic relations
+  (const SKOS_BROADER String "http://www.w3.org/2004/02/skos/core#broader")
+  (const SKOS_NARROWER String "http://www.w3.org/2004/02/skos/core#narrower")
+  (const SKOS_RELATED String "http://www.w3.org/2004/02/skos/core#related")
+  (const SKOS_BROADER_TRANSITIVE String "http://www.w3.org/2004/02/skos/core#broaderTransitive")
+  (const SKOS_NARROWER_TRANSITIVE String "http://www.w3.org/2004/02/skos/core#narrowerTransitive")
+  ;; Mapping relations
+  (const SKOS_EXACT_MATCH String "http://www.w3.org/2004/02/skos/core#exactMatch")
+  (const SKOS_CLOSE_MATCH String "http://www.w3.org/2004/02/skos/core#closeMatch")
+  (const SKOS_BROAD_MATCH String "http://www.w3.org/2004/02/skos/core#broadMatch")
+  (const SKOS_NARROW_MATCH String "http://www.w3.org/2004/02/skos/core#narrowMatch")
+  (const SKOS_RELATED_MATCH String "http://www.w3.org/2004/02/skos/core#relatedMatch")
+  ;; Collections
+  (const SKOS_MEMBER String "http://www.w3.org/2004/02/skos/core#member")
+  (const SKOS_MEMBER_LIST String "http://www.w3.org/2004/02/skos/core#memberList")
+  (const SKOS_NOTATION String "http://www.w3.org/2004/02/skos/core#notation")
+
+  ;; ============================================================================
+  ;; FOAF Namespace - http://xmlns.com/foaf/0.1/
+  ;; ============================================================================
+  (const FOAF_NS String "http://xmlns.com/foaf/0.1/")
+  ;; Classes
+  (const FOAF_PERSON String "http://xmlns.com/foaf/0.1/Person")
+  (const FOAF_AGENT String "http://xmlns.com/foaf/0.1/Agent")
+  (const FOAF_ORGANIZATION String "http://xmlns.com/foaf/0.1/Organization")
+  (const FOAF_GROUP String "http://xmlns.com/foaf/0.1/Group")
+  (const FOAF_DOCUMENT String "http://xmlns.com/foaf/0.1/Document")
+  (const FOAF_IMAGE String "http://xmlns.com/foaf/0.1/Image")
+  (const FOAF_PROJECT String "http://xmlns.com/foaf/0.1/Project")
+  ;; Naming
+  (const FOAF_NAME String "http://xmlns.com/foaf/0.1/name")
+  (const FOAF_GIVEN_NAME String "http://xmlns.com/foaf/0.1/givenName")
+  (const FOAF_FAMILY_NAME String "http://xmlns.com/foaf/0.1/familyName")
+  (const FOAF_NICK String "http://xmlns.com/foaf/0.1/nick")
+  (const FOAF_TITLE String "http://xmlns.com/foaf/0.1/title")
+  ;; Contact
+  (const FOAF_MBOX String "http://xmlns.com/foaf/0.1/mbox")
+  (const FOAF_MBOX_SHA1SUM String "http://xmlns.com/foaf/0.1/mbox_sha1sum")
+  (const FOAF_HOMEPAGE String "http://xmlns.com/foaf/0.1/homepage")
+  (const FOAF_WEBLOG String "http://xmlns.com/foaf/0.1/weblog")
+  (const FOAF_ONLINE_ACCOUNT String "http://xmlns.com/foaf/0.1/OnlineAccount")
+  (const FOAF_ACCOUNT_NAME String "http://xmlns.com/foaf/0.1/accountName")
+  (const FOAF_ACCOUNT_SERVICE_HOMEPAGE String "http://xmlns.com/foaf/0.1/accountServiceHomepage")
+  ;; Images
+  (const FOAF_IMG String "http://xmlns.com/foaf/0.1/img")
+  (const FOAF_DEPICTION String "http://xmlns.com/foaf/0.1/depiction")
+  (const FOAF_DEPICTS String "http://xmlns.com/foaf/0.1/depicts")
+  (const FOAF_THUMBNAIL String "http://xmlns.com/foaf/0.1/thumbnail")
+  ;; Relationships
+  (const FOAF_KNOWS String "http://xmlns.com/foaf/0.1/knows")
+  (const FOAF_INTEREST String "http://xmlns.com/foaf/0.1/interest")
+  (const FOAF_TOPIC String "http://xmlns.com/foaf/0.1/topic")
+  (const FOAF_TOPIC_INTEREST String "http://xmlns.com/foaf/0.1/topic_interest")
+  (const FOAF_MEMBER String "http://xmlns.com/foaf/0.1/member")
+  (const FOAF_BASED_NEAR String "http://xmlns.com/foaf/0.1/based_near")
+  ;; Personal info
+  (const FOAF_AGE String "http://xmlns.com/foaf/0.1/age")
+  (const FOAF_BIRTHDAY String "http://xmlns.com/foaf/0.1/birthday")
+  (const FOAF_GENDER String "http://xmlns.com/foaf/0.1/gender")
+  ;; Topics
+  (const FOAF_PRIMARY_TOPIC String "http://xmlns.com/foaf/0.1/primaryTopic")
+  (const FOAF_IS_PRIMARY_TOPIC_OF String "http://xmlns.com/foaf/0.1/isPrimaryTopicOf")
+
+  ;; ============================================================================
+  ;; W3C Basic Geo Namespace - http://www.w3.org/2003/01/geo/wgs84_pos#
+  ;; ============================================================================
+  (const GEO_NS String "http://www.w3.org/2003/01/geo/wgs84_pos#")
+  (const GEO_POINT String "http://www.w3.org/2003/01/geo/wgs84_pos#Point")
+  (const GEO_SPATIAL_THING String "http://www.w3.org/2003/01/geo/wgs84_pos#SpatialThing")
+  (const GEO_LAT String "http://www.w3.org/2003/01/geo/wgs84_pos#lat")
+  (const GEO_LONG String "http://www.w3.org/2003/01/geo/wgs84_pos#long")
+  (const GEO_ALT String "http://www.w3.org/2003/01/geo/wgs84_pos#alt")
+  (const GEO_LAT_LONG String "http://www.w3.org/2003/01/geo/wgs84_pos#lat_long")
+
+  ;; ============================================================================
+  ;; GeoSPARQL Namespace (OGC) - http://www.opengis.net/ont/geosparql#
+  ;; ============================================================================
+  (const GEOSPARQL_NS String "http://www.opengis.net/ont/geosparql#")
+  ;; Classes
+  (const GEOSPARQL_FEATURE String "http://www.opengis.net/ont/geosparql#Feature")
+  (const GEOSPARQL_GEOMETRY String "http://www.opengis.net/ont/geosparql#Geometry")
+  (const GEOSPARQL_SPATIAL_OBJECT String "http://www.opengis.net/ont/geosparql#SpatialObject")
+  ;; Geometry properties
+  (const GEOSPARQL_HAS_GEOMETRY String "http://www.opengis.net/ont/geosparql#hasGeometry")
+  (const GEOSPARQL_HAS_DEFAULT_GEOMETRY String "http://www.opengis.net/ont/geosparql#hasDefaultGeometry")
+  (const GEOSPARQL_HAS_BOUNDING_BOX String "http://www.opengis.net/ont/geosparql#hasBoundingBox")
+  ;; Serializations
+  (const GEOSPARQL_AS_WKT String "http://www.opengis.net/ont/geosparql#asWKT")
+  (const GEOSPARQL_AS_GML String "http://www.opengis.net/ont/geosparql#asGML")
+  (const GEOSPARQL_AS_GEO_JSON String "http://www.opengis.net/ont/geosparql#asGeoJSON")
+  (const GEOSPARQL_AS_KML String "http://www.opengis.net/ont/geosparql#asKML")
+  ;; Literal types
+  (const GEOSPARQL_WKT_LITERAL String "http://www.opengis.net/ont/geosparql#wktLiteral")
+  (const GEOSPARQL_GML_LITERAL String "http://www.opengis.net/ont/geosparql#gmlLiteral")
+  (const GEOSPARQL_GEO_JSON_LITERAL String "http://www.opengis.net/ont/geosparql#geoJSONLiteral")
+  (const GEOSPARQL_KML_LITERAL String "http://www.opengis.net/ont/geosparql#kmlLiteral")
+  ;; Simple Features (sf) relations
+  (const GEOSPARQL_SF_EQUALS String "http://www.opengis.net/ont/geosparql#sfEquals")
+  (const GEOSPARQL_SF_DISJOINT String "http://www.opengis.net/ont/geosparql#sfDisjoint")
+  (const GEOSPARQL_SF_INTERSECTS String "http://www.opengis.net/ont/geosparql#sfIntersects")
+  (const GEOSPARQL_SF_TOUCHES String "http://www.opengis.net/ont/geosparql#sfTouches")
+  (const GEOSPARQL_SF_CROSSES String "http://www.opengis.net/ont/geosparql#sfCrosses")
+  (const GEOSPARQL_SF_WITHIN String "http://www.opengis.net/ont/geosparql#sfWithin")
+  (const GEOSPARQL_SF_CONTAINS String "http://www.opengis.net/ont/geosparql#sfContains")
+  (const GEOSPARQL_SF_OVERLAPS String "http://www.opengis.net/ont/geosparql#sfOverlaps")
+  ;; Egenhofer (eh) relations
+  (const GEOSPARQL_EH_EQUALS String "http://www.opengis.net/ont/geosparql#ehEquals")
+  (const GEOSPARQL_EH_DISJOINT String "http://www.opengis.net/ont/geosparql#ehDisjoint")
+  (const GEOSPARQL_EH_MEET String "http://www.opengis.net/ont/geosparql#ehMeet")
+  (const GEOSPARQL_EH_OVERLAP String "http://www.opengis.net/ont/geosparql#ehOverlap")
+  (const GEOSPARQL_EH_COVERS String "http://www.opengis.net/ont/geosparql#ehCovers")
+  (const GEOSPARQL_EH_COVERED_BY String "http://www.opengis.net/ont/geosparql#ehCoveredBy")
+  (const GEOSPARQL_EH_INSIDE String "http://www.opengis.net/ont/geosparql#ehInside")
+  (const GEOSPARQL_EH_CONTAINS String "http://www.opengis.net/ont/geosparql#ehContains")
+  ;; RCC8 relations
+  (const GEOSPARQL_RCC8_EQ String "http://www.opengis.net/ont/geosparql#rcc8eq")
+  (const GEOSPARQL_RCC8_DC String "http://www.opengis.net/ont/geosparql#rcc8dc")
+  (const GEOSPARQL_RCC8_EC String "http://www.opengis.net/ont/geosparql#rcc8ec")
+  (const GEOSPARQL_RCC8_PO String "http://www.opengis.net/ont/geosparql#rcc8po")
+  (const GEOSPARQL_RCC8_TPPI String "http://www.opengis.net/ont/geosparql#rcc8tppi")
+  (const GEOSPARQL_RCC8_TPP String "http://www.opengis.net/ont/geosparql#rcc8tpp")
+  (const GEOSPARQL_RCC8_NTPPI String "http://www.opengis.net/ont/geosparql#rcc8ntppi")
+  (const GEOSPARQL_RCC8_NTPP String "http://www.opengis.net/ont/geosparql#rcc8ntpp")
+
+  ;; ============================================================================
+  ;; Schema.org Namespace (common subset) - https://schema.org/
+  ;; ============================================================================
+  (const SCHEMA_NS String "https://schema.org/")
+  ;; Classes
+  (const SCHEMA_THING String "https://schema.org/Thing")
+  (const SCHEMA_PERSON String "https://schema.org/Person")
+  (const SCHEMA_ORGANIZATION String "https://schema.org/Organization")
+  (const SCHEMA_PLACE String "https://schema.org/Place")
+  (const SCHEMA_EVENT String "https://schema.org/Event")
+  (const SCHEMA_CREATIVE_WORK String "https://schema.org/CreativeWork")
+  (const SCHEMA_ACTION String "https://schema.org/Action")
+  (const SCHEMA_PRODUCT String "https://schema.org/Product")
+  ;; Common properties
+  (const SCHEMA_NAME String "https://schema.org/name")
+  (const SCHEMA_DESCRIPTION String "https://schema.org/description")
+  (const SCHEMA_URL String "https://schema.org/url")
+  (const SCHEMA_IMAGE String "https://schema.org/image")
+  (const SCHEMA_IDENTIFIER String "https://schema.org/identifier")
+  ;; Dates
+  (const SCHEMA_DATE_CREATED String "https://schema.org/dateCreated")
+  (const SCHEMA_DATE_MODIFIED String "https://schema.org/dateModified")
+  (const SCHEMA_DATE_PUBLISHED String "https://schema.org/datePublished")
+  ;; Authorship
+  (const SCHEMA_AUTHOR String "https://schema.org/author")
+  (const SCHEMA_CREATOR String "https://schema.org/creator")
+  (const SCHEMA_PUBLISHER String "https://schema.org/publisher")
+  ;; Contact
+  (const SCHEMA_ADDRESS String "https://schema.org/address")
+  (const SCHEMA_EMAIL String "https://schema.org/email")
+  (const SCHEMA_TELEPHONE String "https://schema.org/telephone")
+  ;; Geo
+  (const SCHEMA_GEO String "https://schema.org/geo")
+  (const SCHEMA_LATITUDE String "https://schema.org/latitude")
+  (const SCHEMA_LONGITUDE String "https://schema.org/longitude")
+  ;; Events
+  (const SCHEMA_START_DATE String "https://schema.org/startDate")
+  (const SCHEMA_END_DATE String "https://schema.org/endDate")
+  (const SCHEMA_LOCATION String "https://schema.org/location")
+  ;; Relations
+  (const SCHEMA_SAME_AS String "https://schema.org/sameAs")
+  (const SCHEMA_PART_OF String "https://schema.org/isPartOf")
+  (const SCHEMA_HAS_PART String "https://schema.org/hasPart")
+
+  ;; ============================================================================
+  ;; PROV Namespace (W3C Provenance) - http://www.w3.org/ns/prov#
+  ;; ============================================================================
+  (const PROV_NS String "http://www.w3.org/ns/prov#")
+  ;; Core classes
+  (const PROV_ENTITY String "http://www.w3.org/ns/prov#Entity")
+  (const PROV_ACTIVITY String "http://www.w3.org/ns/prov#Activity")
+  (const PROV_AGENT String "http://www.w3.org/ns/prov#Agent")
+  ;; Core relations
+  (const PROV_WAS_GENERATED_BY String "http://www.w3.org/ns/prov#wasGeneratedBy")
+  (const PROV_WAS_DERIVED_FROM String "http://www.w3.org/ns/prov#wasDerivedFrom")
+  (const PROV_WAS_ATTRIBUTED_TO String "http://www.w3.org/ns/prov#wasAttributedTo")
+  (const PROV_WAS_ASSOCIATED_WITH String "http://www.w3.org/ns/prov#wasAssociatedWith")
+  (const PROV_ACTED_ON_BEHALF_OF String "http://www.w3.org/ns/prov#actedOnBehalfOf")
+  (const PROV_USED String "http://www.w3.org/ns/prov#used")
+  (const PROV_GENERATED String "http://www.w3.org/ns/prov#generated")
+  ;; Time
+  (const PROV_STARTED_AT_TIME String "http://www.w3.org/ns/prov#startedAtTime")
+  (const PROV_ENDED_AT_TIME String "http://www.w3.org/ns/prov#endedAtTime")
+  (const PROV_AT_TIME String "http://www.w3.org/ns/prov#atTime")
+  (const PROV_AT_LOCATION String "http://www.w3.org/ns/prov#atLocation")
+  (const PROV_VALUE String "http://www.w3.org/ns/prov#value")
+  ;; Qualified relations
+  (const PROV_QUALIFIED_GENERATION String "http://www.w3.org/ns/prov#qualifiedGeneration")
+  (const PROV_QUALIFIED_DERIVATION String "http://www.w3.org/ns/prov#qualifiedDerivation")
+  (const PROV_QUALIFIED_USAGE String "http://www.w3.org/ns/prov#qualifiedUsage")
+  (const PROV_GENERATION String "http://www.w3.org/ns/prov#Generation")
+  (const PROV_USAGE String "http://www.w3.org/ns/prov#Usage")
+  (const PROV_DERIVATION String "http://www.w3.org/ns/prov#Derivation")
+  ;; Derivation subtypes
+  (const PROV_PRIMARY_SOURCE String "http://www.w3.org/ns/prov#PrimarySource")
+  (const PROV_QUOTATION String "http://www.w3.org/ns/prov#Quotation")
+  (const PROV_REVISION String "http://www.w3.org/ns/prov#Revision")
+  (const PROV_HAD_PRIMARY_SOURCE String "http://www.w3.org/ns/prov#hadPrimarySource")
+  (const PROV_WAS_QUOTED_FROM String "http://www.w3.org/ns/prov#wasQuotedFrom")
+  (const PROV_WAS_REVISION_OF String "http://www.w3.org/ns/prov#wasRevisionOf")
+
+  ;; ============================================================================
+  ;; SHACL Namespace - http://www.w3.org/ns/shacl#
+  ;; ============================================================================
+  (const SHACL_NS String "http://www.w3.org/ns/shacl#")
+  ;; Shape classes
+  (const SHACL_SHAPE String "http://www.w3.org/ns/shacl#Shape")
+  (const SHACL_NODE_SHAPE String "http://www.w3.org/ns/shacl#NodeShape")
+  (const SHACL_PROPERTY_SHAPE String "http://www.w3.org/ns/shacl#PropertyShape")
+  ;; Targets
+  (const SHACL_TARGET_CLASS String "http://www.w3.org/ns/shacl#targetClass")
+  (const SHACL_TARGET_NODE String "http://www.w3.org/ns/shacl#targetNode")
+  (const SHACL_TARGET_SUBJECTS_OF String "http://www.w3.org/ns/shacl#targetSubjectsOf")
+  (const SHACL_TARGET_OBJECTS_OF String "http://www.w3.org/ns/shacl#targetObjectsOf")
+  ;; Path
+  (const SHACL_PATH String "http://www.w3.org/ns/shacl#path")
+  (const SHACL_INVERSE_PATH String "http://www.w3.org/ns/shacl#inversePath")
+  (const SHACL_ALTERNATIVE_PATH String "http://www.w3.org/ns/shacl#alternativePath")
+  (const SHACL_ZERO_OR_MORE_PATH String "http://www.w3.org/ns/shacl#zeroOrMorePath")
+  (const SHACL_ONE_OR_MORE_PATH String "http://www.w3.org/ns/shacl#oneOrMorePath")
+  ;; Value type constraints
+  (const SHACL_CLASS String "http://www.w3.org/ns/shacl#class")
+  (const SHACL_DATATYPE String "http://www.w3.org/ns/shacl#datatype")
+  (const SHACL_NODE_KIND String "http://www.w3.org/ns/shacl#nodeKind")
+  ;; Cardinality constraints
+  (const SHACL_MIN_COUNT String "http://www.w3.org/ns/shacl#minCount")
+  (const SHACL_MAX_COUNT String "http://www.w3.org/ns/shacl#maxCount")
+  ;; Value range constraints
+  (const SHACL_MIN_EXCLUSIVE String "http://www.w3.org/ns/shacl#minExclusive")
+  (const SHACL_MAX_EXCLUSIVE String "http://www.w3.org/ns/shacl#maxExclusive")
+  (const SHACL_MIN_INCLUSIVE String "http://www.w3.org/ns/shacl#minInclusive")
+  (const SHACL_MAX_INCLUSIVE String "http://www.w3.org/ns/shacl#maxInclusive")
+  ;; String constraints
+  (const SHACL_MIN_LENGTH String "http://www.w3.org/ns/shacl#minLength")
+  (const SHACL_MAX_LENGTH String "http://www.w3.org/ns/shacl#maxLength")
+  (const SHACL_PATTERN String "http://www.w3.org/ns/shacl#pattern")
+  (const SHACL_FLAGS String "http://www.w3.org/ns/shacl#flags")
+  ;; Property pair constraints
+  (const SHACL_EQUALS String "http://www.w3.org/ns/shacl#equals")
+  (const SHACL_DISJOINT String "http://www.w3.org/ns/shacl#disjoint")
+  (const SHACL_LESS_THAN String "http://www.w3.org/ns/shacl#lessThan")
+  (const SHACL_LESS_THAN_OR_EQUALS String "http://www.w3.org/ns/shacl#lessThanOrEquals")
+  ;; Logical constraints
+  (const SHACL_NOT String "http://www.w3.org/ns/shacl#not")
+  (const SHACL_AND String "http://www.w3.org/ns/shacl#and")
+  (const SHACL_OR String "http://www.w3.org/ns/shacl#or")
+  (const SHACL_XONE String "http://www.w3.org/ns/shacl#xone")
+  ;; Shape-based constraints
+  (const SHACL_NODE String "http://www.w3.org/ns/shacl#node")
+  (const SHACL_PROPERTY String "http://www.w3.org/ns/shacl#property")
+  (const SHACL_QUALIFIED_VALUE_SHAPE String "http://www.w3.org/ns/shacl#qualifiedValueShape")
+  (const SHACL_QUALIFIED_MIN_COUNT String "http://www.w3.org/ns/shacl#qualifiedMinCount")
+  (const SHACL_QUALIFIED_MAX_COUNT String "http://www.w3.org/ns/shacl#qualifiedMaxCount")
+  ;; Other constraints
+  (const SHACL_CLOSED String "http://www.w3.org/ns/shacl#closed")
+  (const SHACL_IGNORED_PROPERTIES String "http://www.w3.org/ns/shacl#ignoredProperties")
+  (const SHACL_HAS_VALUE String "http://www.w3.org/ns/shacl#hasValue")
+  (const SHACL_IN String "http://www.w3.org/ns/shacl#in")
+  ;; Node kinds
+  (const SHACL_IRI String "http://www.w3.org/ns/shacl#IRI")
+  (const SHACL_BLANK_NODE String "http://www.w3.org/ns/shacl#BlankNode")
+  (const SHACL_LITERAL String "http://www.w3.org/ns/shacl#Literal")
+  (const SHACL_BLANK_NODE_OR_IRI String "http://www.w3.org/ns/shacl#BlankNodeOrIRI")
+  (const SHACL_BLANK_NODE_OR_LITERAL String "http://www.w3.org/ns/shacl#BlankNodeOrLiteral")
+  (const SHACL_IRI_OR_LITERAL String "http://www.w3.org/ns/shacl#IRIOrLiteral")
+  ;; Validation report
+  (const SHACL_VALIDATION_REPORT String "http://www.w3.org/ns/shacl#ValidationReport")
+  (const SHACL_CONFORMS String "http://www.w3.org/ns/shacl#conforms")
+  (const SHACL_RESULT String "http://www.w3.org/ns/shacl#result")
+  (const SHACL_VALIDATION_RESULT String "http://www.w3.org/ns/shacl#ValidationResult")
+  (const SHACL_FOCUS_NODE String "http://www.w3.org/ns/shacl#focusNode")
+  (const SHACL_RESULT_PATH String "http://www.w3.org/ns/shacl#resultPath")
+  (const SHACL_RESULT_SEVERITY String "http://www.w3.org/ns/shacl#resultSeverity")
+  (const SHACL_SOURCE_CONSTRAINT_COMPONENT String "http://www.w3.org/ns/shacl#sourceConstraintComponent")
+  (const SHACL_SOURCE_SHAPE String "http://www.w3.org/ns/shacl#sourceShape")
+  ;; Severity
+  (const SHACL_SEVERITY String "http://www.w3.org/ns/shacl#Severity")
+  (const SHACL_VIOLATION String "http://www.w3.org/ns/shacl#Violation")
+  (const SHACL_WARNING String "http://www.w3.org/ns/shacl#Warning")
+  (const SHACL_INFO String "http://www.w3.org/ns/shacl#Info"))

@@ -4,10 +4,19 @@ version = "0.1.0"
 entry = "src/rdf.slop"
 
 [build]
-output = "build/slop-rdf"
-include = ["src"]
+output = "build/slop_rdf.a"
+sources = ["src"]
 type = "static"
 debug = false
+
+[test]
+sources = ["src"]
+pattern = "*.slop"
+
+[verify]
+sources = ["src"]
+pattern = "*.slop"
+timeout = 5000
 
 [build.link]
 libraries = []
