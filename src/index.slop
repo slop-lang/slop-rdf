@@ -38,10 +38,13 @@
     (@spec ((Arena) -> IndexedGraph))
     (@alloc arena)
     (@post (== (. $result size) 0))
-    (hole IndexedGraph "create empty IndexedGraph with empty maps for spo/pso/osp"
-      :complexity tier-2
-      :context (arena map-new list-new)
-      :required (map-new list-new))
+    (record-new IndexedGraph
+      (triples (list-new arena Triple))
+      (index (record-new TripleIndex
+               (spo (map-new arena Term TermMap))
+               (pso (map-new arena Term TermMap))
+               (osp (map-new arena Term TermMap))))
+      (size 0))
     :c-name "rdf_indexed_graph_create")
 
   (fn indexed-graph-add ((in arena Arena) (mut g IndexedGraph) (in t Triple))
@@ -51,10 +54,52 @@
     (@pre (>= (. g size) 0))
     (@post (>= (. $result size) (. g size)))
     (@post (indexed-graph-contains $result t))
-    (hole IndexedGraph "add triple to triples list and update spo/pso/osp indexes"
-      :complexity tier-3
-      :context (arena g t triple-subject triple-predicate triple-object map-get map-put list-push)
-      :required (triple-subject triple-predicate triple-object))
+    (let ((s (triple-subject t))
+          (p (triple-predicate t))
+          (o (triple-object t)))
+      ;; Add to triples list
+      (list-push (. g triples) t)
+      ;; Update SPO index: subject -> predicate -> objects
+      (let ((spo-idx (. (. g index) spo)))
+        (when (not (map-has spo-idx s))
+          (map-put spo-idx s (map-new arena Term (Set Term))))
+        (match (map-get spo-idx s)
+          ((some pred-map)
+            (when (not (map-has pred-map p))
+              (map-put pred-map p (set-new arena Term)))
+            (match (map-get pred-map p)
+              ((some obj-set) (set-put obj-set o))
+              ((none) (do))))
+          ((none) (do))))
+      ;; Update PSO index: predicate -> subject -> objects
+      (let ((pso-idx (. (. g index) pso)))
+        (when (not (map-has pso-idx p))
+          (map-put pso-idx p (map-new arena Term (Set Term))))
+        (match (map-get pso-idx p)
+          ((some subj-map)
+            (when (not (map-has subj-map s))
+              (map-put subj-map s (set-new arena Term)))
+            (match (map-get subj-map s)
+              ((some obj-set) (set-put obj-set o))
+              ((none) (do))))
+          ((none) (do))))
+      ;; Update OSP index: object -> subject -> predicates
+      (let ((osp-idx (. (. g index) osp)))
+        (when (not (map-has osp-idx o))
+          (map-put osp-idx o (map-new arena Term (Set Term))))
+        (match (map-get osp-idx o)
+          ((some subj-map)
+            (when (not (map-has subj-map s))
+              (map-put subj-map s (set-new arena Term)))
+            (match (map-get subj-map s)
+              ((some pred-set) (set-put pred-set p))
+              ((none) (do))))
+          ((none) (do))))
+      ;; Return updated graph
+      (record-new IndexedGraph
+        (triples (. g triples))
+        (index (. g index))
+        (size (+ (. g size) 1))))
     :c-name "rdf_indexed_graph_add")
 
   (fn indexed-graph-contains ((in g IndexedGraph) (in t Triple))
@@ -62,10 +107,16 @@
     (@spec ((IndexedGraph Triple) -> Bool))
     (@pure)
     (@pre (>= (. g size) 0))
-    (hole Bool "lookup in spo index: subject -> predicate -> check object in set"
-      :complexity tier-2
-      :context (g t triple-subject triple-predicate triple-object map-get map-has term-eq)
-      :required (triple-subject triple-predicate triple-object map-get))
+    (let ((s (triple-subject t))
+          (p (triple-predicate t))
+          (o (triple-object t))
+          (spo-idx (. (. g index) spo)))
+      (match (map-get spo-idx s)
+        ((some pred-map)
+          (match (map-get pred-map p)
+            ((some obj-set) (set-has obj-set o))
+            ((none) false)))
+        ((none) false)))
     :c-name "rdf_indexed_graph_contains")
 
   (fn indexed-graph-match ((in arena Arena) (in g IndexedGraph) (in subj (Option Term)) (in pred (Option Term)) (in obj (Option Term)))
@@ -74,10 +125,81 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (@post (>= (list-len $result) 0))
-    (hole (List Triple) "select best index based on bound components: SPO if subject bound, PSO if predicate bound, OSP if object bound, scan if none bound"
-      :complexity tier-4
-      :context (arena g subj pred obj map-get map-keys list-new list-push make-triple term-eq)
-      :required (map-get))
+    (let ((mut result (list-new arena Triple)))
+      (match subj
+        ((some s)
+          ;; Subject is bound, use SPO index
+          (let ((spo-idx (. (. g index) spo)))
+            (match (map-get spo-idx s)
+              ((some pred-map)
+                (match pred
+                  ((some p)
+                    ;; Subject and predicate bound
+                    (match (map-get pred-map p)
+                      ((some obj-set-val)
+                        (let ((obj-set (Set Term) obj-set-val))
+                          (match obj
+                            ((some o)
+                              ;; All three bound - check existence
+                              (when (set-has obj-set o)
+                                (list-push result (make-triple arena s p o))))
+                            ((none)
+                              ;; Subject and predicate bound, iterate objects
+                              (for-each (o (set-elements obj-set))
+                                (list-push result (make-triple arena s p o)))))))
+                      ((none) (do))))
+                  ((none)
+                    ;; Only subject bound, iterate predicates
+                    (for-each (p (map-keys pred-map))
+                      (match (map-get pred-map p)
+                        ((some obj-set)
+                          (match obj
+                            ((some o)
+                              (when (set-has obj-set o)
+                                (list-push result (make-triple arena s p o))))
+                            ((none)
+                              (for-each (o (set-elements obj-set))
+                                (list-push result (make-triple arena s p o))))))
+                        ((none) (do)))))))
+              ((none) (do)))))
+        ((none)
+          (match pred
+            ((some p)
+              ;; Predicate bound, use PSO index
+              (let ((pso-idx (. (. g index) pso)))
+                (match (map-get pso-idx p)
+                  ((some subj-map)
+                    (for-each (s (map-keys subj-map))
+                      (match (map-get subj-map s)
+                        ((some obj-set)
+                          (match obj
+                            ((some o)
+                              (when (set-has obj-set o)
+                                (list-push result (make-triple arena s p o))))
+                            ((none)
+                              (for-each (o (set-elements obj-set))
+                                (list-push result (make-triple arena s p o))))))
+                        ((none) (do)))))
+                  ((none) (do)))))
+            ((none)
+              (match obj
+                ((some o)
+                  ;; Only object bound, use OSP index
+                  (let ((osp-idx (. (. g index) osp)))
+                    (match (map-get osp-idx o)
+                      ((some subj-map)
+                        (for-each (s (map-keys subj-map))
+                          (match (map-get subj-map s)
+                            ((some pred-set)
+                              (for-each (p (set-elements pred-set))
+                                (list-push result (make-triple arena s p o))))
+                            ((none) (do)))))
+                      ((none) (do)))))
+                ((none)
+                  ;; Nothing bound, scan all triples
+                  (for-each (t (. g triples))
+                    (list-push result t))))))))
+      result)
     :c-name "rdf_indexed_graph_match")
 
   (fn indexed-graph-size ((in g IndexedGraph))
@@ -93,10 +215,18 @@
     (@spec ((Arena IndexedGraph Term Term) -> (List Term)))
     (@alloc arena)
     (@pre (>= (. g size) 0))
-    (hole (List Term) "use OSP index: lookup object -> iterate subjects -> check predicate"
-      :complexity tier-3
-      :context (arena g pred obj map-get map-keys list-new list-push term-eq)
-      :required (map-get))
+    (let ((mut result (list-new arena Term))
+          (osp-idx (. (. g index) osp)))
+      (match (map-get osp-idx obj)
+        ((some subj-map)
+          (for-each (s (map-keys subj-map))
+            (match (map-get subj-map s)
+              ((some pred-set)
+                (when (set-has pred-set pred)
+                  (list-push result s)))
+              ((none) (do)))))
+        ((none) (do)))
+      result)
     :c-name "rdf_indexed_graph_subjects")
 
   (fn indexed-graph-objects ((in arena Arena) (in g IndexedGraph) (in subj Term) (in pred Term))
@@ -104,8 +234,15 @@
     (@spec ((Arena IndexedGraph Term Term) -> (List Term)))
     (@alloc arena)
     (@pre (>= (. g size) 0))
-    (hole (List Term) "use SPO index: lookup subject -> lookup predicate -> return object set as list"
-      :complexity tier-2
-      :context (arena g subj pred map-get list-new list-push)
-      :required (map-get))
+    (let ((mut result (list-new arena Term))
+          (spo-idx (. (. g index) spo)))
+      (match (map-get spo-idx subj)
+        ((some pred-map)
+          (match (map-get pred-map pred)
+            ((some obj-set)
+              (for-each (o (set-elements obj-set))
+                (list-push result o)))
+            ((none) (do))))
+        ((none) (do)))
+      result)
     :c-name "rdf_indexed_graph_objects"))

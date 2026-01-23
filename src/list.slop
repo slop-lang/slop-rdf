@@ -15,10 +15,28 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (@post (>= (list-len $result) 0))
-    (hole (List Term) "traverse RDF list collecting rdf:first values until rdf:nil"
-      :complexity tier-3
-      :context (arena g head make-iri graph-match triple-object term-eq RDF_FIRST RDF_REST RDF_NIL list-new list-push)
-      :required (graph-match))
+    (let ((mut result (list-new arena Term))
+          (first-pred (make-iri arena RDF_FIRST))
+          (rest-pred (make-iri arena RDF_REST))
+          (nil-term (make-iri arena RDF_NIL))
+          (mut current head)
+          (no-obj (Option Term) (none)))  ;; Typed none for graph-match
+      ;; Traverse until we hit rdf:nil
+      (while (not (term-eq current nil-term))
+        ;; Get rdf:first value
+        (let ((first-matches (graph-match arena g (some current) (some first-pred) no-obj)))
+          (when (> (list-len (. first-matches triples)) 0)
+            (match (list-get (. first-matches triples) 0)
+              ((some first-triple) (list-push result (triple-object first-triple)))
+              ((none) (do)))))
+        ;; Get rdf:rest for next iteration
+        (let ((rest-matches (graph-match arena g (some current) (some rest-pred) no-obj)))
+          (if (> (list-len (. rest-matches triples)) 0)
+            (match (list-get (. rest-matches triples) 0)
+              ((some rest-triple) (set! current (triple-object rest-triple)))
+              ((none) (set! current nil-term)))
+            (set! current nil-term))))  ;; No rest, terminate
+      result)
     :c-name "rdf_list_elements")
 
   (fn rdf-list-contains ((in arena Arena) (in g Graph) (in head Term) (in element Term))
@@ -26,10 +44,12 @@
     (@spec ((Arena Graph Term Term) -> Bool))
     (@alloc arena)
     (@pre (>= (. g size) 0))
-    (hole Bool "get list elements and search for element using term-eq"
-      :complexity tier-2
-      :context (arena g head element rdf-list-elements term-eq)
-      :required (rdf-list-elements term-eq))
+    (let ((elements (rdf-list-elements arena g head))
+          (mut found false))
+      (for-each (e elements)
+        (when (term-eq e element)
+          (set! found true)))
+      found)
     :c-name "rdf_list_contains")
 
   (fn rdf-list-length ((in arena Arena) (in g Graph) (in head Term))
@@ -38,8 +58,5 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (@post (>= $result 0))
-    (hole (Int 0 ..) "get list elements and return length"
-      :complexity tier-1
-      :context (arena g head rdf-list-elements list-len)
-      :required (rdf-list-elements list-len))
+    (list-len (rdf-list-elements arena g head))
     :c-name "rdf_list_length"))
