@@ -2,10 +2,12 @@
   (@doc "RDF list traversal utilities for rdf:first/rdf:rest chains")
 
   (import rdf (Term Triple Graph term-eq triple-object graph-match make-iri))
+  (import index (IndexedGraph indexed-graph-match))
   (import vocab (RDF_FIRST RDF_REST RDF_NIL))
 
   (export
     rdf-list-elements
+    rdf-list-elements-indexed
     rdf-list-contains
     rdf-list-length)
 
@@ -38,6 +40,36 @@
             (set! current nil-term))))  ;; No rest, terminate
       result)
     :c-name "rdf_list_elements")
+
+  (fn rdf-list-elements-indexed ((in arena Arena) (in g IndexedGraph) (in head Term))
+    (@intent "Extract all elements from an RDF list using IndexedGraph")
+    (@spec ((Arena IndexedGraph Term) -> (List Term)))
+    (@alloc arena)
+    (@pre (>= (. g size) 0))
+    (@post (>= (list-len $result) 0))
+    (let ((mut result (list-new arena Term))
+          (first-pred (make-iri arena RDF_FIRST))
+          (rest-pred (make-iri arena RDF_REST))
+          (nil-term (make-iri arena RDF_NIL))
+          (mut current head)
+          (no-obj (Option Term) (none)))  ;; Typed none for indexed-graph-match
+      ;; Traverse until we hit rdf:nil
+      (while (not (term-eq current nil-term))
+        ;; Get rdf:first value
+        (let ((first-matches (indexed-graph-match arena g (some current) (some first-pred) no-obj)))
+          (when (> (list-len first-matches) 0)
+            (match (list-get first-matches 0)
+              ((some first-triple) (list-push result (triple-object first-triple)))
+              ((none) (do)))))
+        ;; Get rdf:rest for next iteration
+        (let ((rest-matches (indexed-graph-match arena g (some current) (some rest-pred) no-obj)))
+          (if (> (list-len rest-matches) 0)
+            (match (list-get rest-matches 0)
+              ((some rest-triple) (set! current (triple-object rest-triple)))
+              ((none) (set! current nil-term)))
+            (set! current nil-term))))  ;; No rest, terminate
+      result)
+    :c-name "rdf_list_elements_indexed")
 
   (fn rdf-list-contains ((in arena Arena) (in g Graph) (in head Term) (in element Term))
     (@intent "Check if an RDF list contains a specific element")
