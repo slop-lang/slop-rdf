@@ -1,0 +1,137 @@
+(module test-basic-rdf
+  (@doc "Tests for core RDF operations: terms, triples, and equality")
+
+  (import rdf
+    (make-iri make-blank make-literal term-kind term-eq
+     make-triple triple-subject triple-predicate triple-object triple-eq))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-bool test-summary))
+
+  (fn main ()
+    (@intent "Run all basic RDF tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== Basic RDF Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test IRI creation
+      (println "-- IRI Creation --")
+      (let ((iri1 (make-iri arena "http://example.org/foo"))
+            (iri2 (make-iri arena "http://example.org/bar"))
+            (iri3 (make-iri arena "http://example.org/foo")))
+        (set! s (assert-true arena s "IRI created is IRI kind"
+          (== (term-kind iri1) 'iri)))
+        (set! s (assert-true arena s "Same IRI values are equal"
+          (term-eq iri1 iri3)))
+        (set! s (assert-false arena s "Different IRI values are not equal"
+          (term-eq iri1 iri2))))
+
+      ;; Test blank node creation
+      (println "")
+      (println "-- Blank Node Creation --")
+      (let ((blank1 (make-blank arena 0))
+            (blank2 (make-blank arena 1))
+            (blank3 (make-blank arena 0)))
+        (set! s (assert-true arena s "Blank node created is blank kind"
+          (== (term-kind blank1) 'blank)))
+        (set! s (assert-true arena s "Same blank node IDs are equal"
+          (term-eq blank1 blank3)))
+        (set! s (assert-false arena s "Different blank node IDs are not equal"
+          (term-eq blank1 blank2))))
+
+      ;; Test literal creation (plain)
+      (println "")
+      (println "-- Literal Creation (Plain) --")
+      (let ((lit1 (make-literal arena "hello" (none) (none)))
+            (lit2 (make-literal arena "world" (none) (none)))
+            (lit3 (make-literal arena "hello" (none) (none))))
+        (set! s (assert-true arena s "Literal created is literal kind"
+          (== (term-kind lit1) 'literal)))
+        (set! s (assert-true arena s "Same literal values are equal"
+          (term-eq lit1 lit3)))
+        (set! s (assert-false arena s "Different literal values are not equal"
+          (term-eq lit1 lit2))))
+
+      ;; Test literal with datatype
+      (println "")
+      (println "-- Literal Creation (Typed) --")
+      (let ((int-lit1 (make-literal arena "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))
+            (int-lit2 (make-literal arena "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))
+            (str-lit (make-literal arena "42" (some "http://www.w3.org/2001/XMLSchema#string") (none))))
+        (set! s (assert-true arena s "Typed literals with same datatype are equal"
+          (term-eq int-lit1 int-lit2)))
+        (set! s (assert-false arena s "Literals with different datatypes are not equal"
+          (term-eq int-lit1 str-lit))))
+
+      ;; Test literal with language tag
+      (println "")
+      (println "-- Literal Creation (Language Tagged) --")
+      (let ((en-lit (make-literal arena "hello" (none) (some "en")))
+            (fr-lit (make-literal arena "bonjour" (none) (some "fr")))
+            (en-lit2 (make-literal arena "hello" (none) (some "en"))))
+        (set! s (assert-true arena s "Same language tagged literals are equal"
+          (term-eq en-lit en-lit2)))
+        (set! s (assert-false arena s "Different language tags are not equal"
+          (term-eq en-lit fr-lit))))
+
+      ;; Test term kind discrimination
+      (println "")
+      (println "-- Term Kind Discrimination --")
+      (let ((iri (make-iri arena "http://example.org/x"))
+            (blank (make-blank arena 99))
+            (lit (make-literal arena "test" (none) (none))))
+        (set! s (assert-false arena s "IRI and blank are not equal"
+          (term-eq iri blank)))
+        (set! s (assert-false arena s "IRI and literal are not equal"
+          (term-eq iri lit)))
+        (set! s (assert-false arena s "Blank and literal are not equal"
+          (term-eq blank lit))))
+
+      ;; Test triple creation
+      (println "")
+      (println "-- Triple Creation --")
+      (let ((subj (make-iri arena "http://example.org/alice"))
+            (pred (make-iri arena "http://example.org/knows"))
+            (obj (make-iri arena "http://example.org/bob")))
+        (let ((triple (make-triple arena subj pred obj)))
+          (set! s (assert-true arena s "Triple subject is correct"
+            (term-eq (triple-subject triple) subj)))
+          (set! s (assert-true arena s "Triple predicate is correct"
+            (term-eq (triple-predicate triple) pred)))
+          (set! s (assert-true arena s "Triple object is correct"
+            (term-eq (triple-object triple) obj)))))
+
+      ;; Test triple equality
+      (println "")
+      (println "-- Triple Equality --")
+      (let ((s1 (make-iri arena "http://example.org/s"))
+            (p1 (make-iri arena "http://example.org/p"))
+            (o1 (make-iri arena "http://example.org/o"))
+            (s2 (make-iri arena "http://example.org/s"))
+            (p2 (make-iri arena "http://example.org/p"))
+            (o2 (make-iri arena "http://example.org/o"))
+            (o3 (make-iri arena "http://example.org/other")))
+        (let ((t1 (make-triple arena s1 p1 o1))
+              (t2 (make-triple arena s2 p2 o2))
+              (t3 (make-triple arena s1 p1 o3)))
+          (set! s (assert-true arena s "Identical triples are equal"
+            (triple-eq t1 t2)))
+          (set! s (assert-false arena s "Triples with different objects are not equal"
+            (triple-eq t1 t3)))))
+
+      ;; Test triple with literal object
+      (println "")
+      (println "-- Triple with Literal Object --")
+      (let ((subj (make-iri arena "http://example.org/person"))
+            (pred (make-iri arena "http://example.org/name"))
+            (obj (make-literal arena "Alice" (none) (none))))
+        (let ((triple (make-triple arena subj pred obj)))
+          (set! s (assert-true arena s "Triple with literal object has correct subject"
+            (term-eq (triple-subject triple) subj)))
+          (set! s (assert-true arena s "Triple with literal object has correct object"
+            (term-eq (triple-object triple) obj)))))
+
+      (test-summary arena s)
+      0))))

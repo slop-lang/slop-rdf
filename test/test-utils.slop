@@ -1,0 +1,82 @@
+(module test-utils
+  (@doc "Shared test utilities for slop-rdf integration tests")
+
+  (export
+    TestState
+    test-state-new
+    assert-true
+    assert-false
+    assert-eq-int
+    assert-eq-bool
+    test-summary)
+
+  ;; Test state record to track pass/fail counts
+  (type TestState (record
+    (passed (Int 0 ..))
+    (failed (Int 0 ..))))
+
+  (fn test-state-new ((in arena Arena))
+    (@intent "Create a new test state with zero counts")
+    (@spec ((Arena) -> TestState))
+    (@alloc arena)
+    (record-new TestState (passed 0) (failed 0)))
+
+  (fn assert-true ((in arena Arena) (mut state TestState) (in name String) (in condition Bool))
+    (@intent "Assert that condition is true, printing pass/fail")
+    (@spec ((Arena TestState String Bool) -> TestState))
+    (@alloc arena)
+    (if condition
+      (do
+        (print "[PASS] ")
+        (println name)
+        (record-new TestState (passed (+ (. state passed) 1)) (failed (. state failed))))
+      (do
+        (print "[FAIL] ")
+        (println name)
+        (record-new TestState (passed (. state passed)) (failed (+ (. state failed) 1))))))
+
+  (fn assert-false ((in arena Arena) (mut state TestState) (in name String) (in condition Bool))
+    (@intent "Assert that condition is false")
+    (@spec ((Arena TestState String Bool) -> TestState))
+    (@alloc arena)
+    (assert-true arena state name (not condition)))
+
+  (fn assert-eq-int ((in arena Arena) (mut state TestState) (in name String) (in expected Int) (in actual Int))
+    (@intent "Assert that two integers are equal")
+    (@spec ((Arena TestState String Int Int) -> TestState))
+    (@alloc arena)
+    (if (== expected actual)
+      (do
+        (print "[PASS] ")
+        (println name)
+        (record-new TestState (passed (+ (. state passed) 1)) (failed (. state failed))))
+      (do
+        (print "[FAIL] ")
+        (println name)
+        (record-new TestState (passed (. state passed)) (failed (+ (. state failed) 1))))))
+
+  (fn assert-eq-bool ((in arena Arena) (mut state TestState) (in name String) (in expected Bool) (in actual Bool))
+    (@intent "Assert that two booleans are equal")
+    (@spec ((Arena TestState String Bool Bool) -> TestState))
+    (@alloc arena)
+    (if (== expected actual)
+      (do
+        (print "[PASS] ")
+        (println name)
+        (record-new TestState (passed (+ (. state passed) 1)) (failed (. state failed))))
+      (do
+        (print "[FAIL] ")
+        (println name)
+        (record-new TestState (passed (. state passed)) (failed (+ (. state failed) 1))))))
+
+  (fn test-summary ((in arena Arena) (in state TestState))
+    (@intent "Print test summary")
+    (@spec ((Arena TestState) -> Unit))
+    (@alloc arena)
+    (println "")
+    (println "================")
+    (println "TEST SUMMARY")
+    (println "================")
+    (if (== (. state failed) 0)
+      (println "All tests passed!")
+      (println "Some tests failed."))))

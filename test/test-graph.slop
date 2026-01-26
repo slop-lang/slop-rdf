@@ -1,0 +1,189 @@
+(module test-graph
+  (@doc "Tests for RDF graph operations: add, remove, contains, and pattern matching")
+
+  (import rdf
+    (Term make-iri make-blank make-literal make-triple term-eq triple-eq
+     make-graph graph-add graph-remove graph-size graph-contains graph-match))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all graph tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== Graph Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test empty graph creation
+      (println "-- Empty Graph --")
+      (let ((g (make-graph arena)))
+        (set! s (assert-eq-int arena s "Empty graph has size 0"
+          0 (graph-size g))))
+
+      ;; Test adding triples
+      (println "")
+      (println "-- Adding Triples --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/alice"))
+            (pred (make-iri arena "http://example.org/knows"))
+            (obj (make-iri arena "http://example.org/bob")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (graph-add arena g t)))
+            (set! s (assert-eq-int arena s "Graph with one triple has size 1"
+              1 (graph-size g1)))
+            (set! s (assert-true arena s "Graph contains added triple"
+              (graph-contains g1 t))))))
+
+      ;; Test duplicate handling
+      (println "")
+      (println "-- Duplicate Handling --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/x"))
+            (pred (make-iri arena "http://example.org/y"))
+            (obj (make-iri arena "http://example.org/z")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (graph-add arena g t)))
+            (let ((g2 (graph-add arena g1 t)))
+              (set! s (assert-eq-int arena s "Adding duplicate does not increase size"
+                1 (graph-size g2)))))))
+
+      ;; Test multiple triples
+      (println "")
+      (println "-- Multiple Triples --")
+      (let ((g (make-graph arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice knows carol))
+              (t3 (make-triple arena bob knows carol)))
+          (let ((g1 (graph-add arena g t1)))
+            (let ((g2 (graph-add arena g1 t2)))
+              (let ((g3 (graph-add arena g2 t3)))
+                (set! s (assert-eq-int arena s "Graph with 3 triples has size 3"
+                  3 (graph-size g3)))
+                (set! s (assert-true arena s "Graph contains first triple"
+                  (graph-contains g3 t1)))
+                (set! s (assert-true arena s "Graph contains second triple"
+                  (graph-contains g3 t2)))
+                (set! s (assert-true arena s "Graph contains third triple"
+                  (graph-contains g3 t3))))))))
+
+      ;; Test remove triple
+      (println "")
+      (println "-- Removing Triples --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (p1 (make-iri arena "http://example.org/p1"))
+            (p2 (make-iri arena "http://example.org/p2"))
+            (obj (make-iri arena "http://example.org/o")))
+        (let ((t1 (make-triple arena subj p1 obj))
+              (t2 (make-triple arena subj p2 obj)))
+          (let ((g1 (graph-add arena g t1)))
+            (let ((g2 (graph-add arena g1 t2)))
+              (let ((g3 (graph-remove arena g2 t1)))
+                (set! s (assert-eq-int arena s "Graph after removal has size 1"
+                  1 (graph-size g3)))
+                (set! s (assert-false arena s "Removed triple is not in graph"
+                  (graph-contains g3 t1)))
+                (set! s (assert-true arena s "Other triple still in graph"
+                  (graph-contains g3 t2))))))))
+
+      ;; Test graph-match with subject bound
+      (println "")
+      (println "-- Pattern Matching: Subject Bound --")
+      (let ((g (make-graph arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (likes (make-iri arena "http://example.org/likes")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice likes bob))
+              (t3 (make-triple arena bob knows alice)))
+          (let ((g1 (graph-add arena (graph-add arena (graph-add arena g t1) t2) t3)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (graph-match arena g1 (some alice) no-opt no-opt)))
+                (set! s (assert-eq-int arena s "Match with subject=alice returns 2 triples"
+                  2 (graph-size matches))))))))
+
+      ;; Test graph-match with predicate bound
+      (println "")
+      (println "-- Pattern Matching: Predicate Bound --")
+      (let ((g (make-graph arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena bob knows carol)))
+          (let ((g1 (graph-add arena (graph-add arena g t1) t2)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (graph-match arena g1 no-opt (some knows) no-opt)))
+                (set! s (assert-eq-int arena s "Match with predicate=knows returns 2 triples"
+                  2 (graph-size matches))))))))
+
+      ;; Test graph-match with object bound
+      (println "")
+      (println "-- Pattern Matching: Object Bound --")
+      (let ((g (make-graph arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (likes (make-iri arena "http://example.org/likes")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice likes bob)))
+          (let ((g1 (graph-add arena (graph-add arena g t1) t2)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (graph-match arena g1 no-opt no-opt (some bob))))
+                (set! s (assert-eq-int arena s "Match with object=bob returns 2 triples"
+                  2 (graph-size matches))))))))
+
+      ;; Test graph-match with all wildcards
+      (println "")
+      (println "-- Pattern Matching: All Wildcards --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (pred (make-iri arena "http://example.org/p"))
+            (o1 (make-iri arena "http://example.org/o1"))
+            (o2 (make-iri arena "http://example.org/o2")))
+        (let ((t1 (make-triple arena subj pred o1))
+              (t2 (make-triple arena subj pred o2)))
+          (let ((g1 (graph-add arena (graph-add arena g t1) t2)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (graph-match arena g1 no-opt no-opt no-opt)))
+                (set! s (assert-eq-int arena s "Match with all wildcards returns all 2 triples"
+                  2 (graph-size matches))))))))
+
+      ;; Test graph-match with all bound (exact match)
+      (println "")
+      (println "-- Pattern Matching: All Bound (Exact) --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (pred (make-iri arena "http://example.org/p"))
+            (obj (make-iri arena "http://example.org/o")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (graph-add arena g t)))
+            (let ((matches (graph-match arena g1 (some subj) (some pred) (some obj))))
+              (set! s (assert-eq-int arena s "Exact match returns 1 triple"
+                1 (graph-size matches)))))))
+
+      ;; Test graph-match with no matches
+      (println "")
+      (println "-- Pattern Matching: No Matches --")
+      (let ((g (make-graph arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (pred (make-iri arena "http://example.org/p"))
+            (obj (make-iri arena "http://example.org/o"))
+            (other (make-iri arena "http://example.org/other")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (graph-add arena g t)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (graph-match arena g1 (some other) no-opt no-opt)))
+                (set! s (assert-eq-int arena s "Match with non-existent subject returns 0"
+                  0 (graph-size matches))))))))
+
+      (test-summary arena s)
+      0))))

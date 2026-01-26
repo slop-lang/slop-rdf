@@ -1,0 +1,169 @@
+(module test-vocab
+  (@doc "Tests for standard RDF vocabulary usage")
+
+  (import rdf (Term make-iri make-literal make-triple term-eq make-graph graph-add graph-match graph-size))
+  (import vocab
+    (RDF_TYPE RDF_FIRST RDF_REST RDF_NIL
+     RDFS_LABEL RDFS_CLASS RDFS_SUBCLASS_OF
+     OWL_SAME_AS OWL_CLASS OWL_THING
+     FOAF_PERSON FOAF_NAME FOAF_KNOWS FOAF_MBOX
+     XSD_STRING XSD_INTEGER))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all vocabulary tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== Vocabulary Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test RDF vocabulary constants
+      (println "-- RDF Vocabulary --")
+      (let ((rdf-type (make-iri arena RDF_TYPE))
+            (rdf-first (make-iri arena RDF_FIRST))
+            (rdf-rest (make-iri arena RDF_REST))
+            (rdf-nil (make-iri arena RDF_NIL)))
+        (set! s (assert-true arena s "RDF_TYPE IRI is valid"
+          (term-eq rdf-type (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"))))
+        (set! s (assert-true arena s "RDF_FIRST IRI is valid"
+          (term-eq rdf-first (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"))))
+        (set! s (assert-true arena s "RDF_REST IRI is valid"
+          (term-eq rdf-rest (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"))))
+        (set! s (assert-true arena s "RDF_NIL IRI is valid"
+          (term-eq rdf-nil (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")))))
+
+      ;; Test RDFS vocabulary
+      (println "")
+      (println "-- RDFS Vocabulary --")
+      (let ((rdfs-label (make-iri arena RDFS_LABEL))
+            (rdfs-class (make-iri arena RDFS_CLASS))
+            (rdfs-subclass (make-iri arena RDFS_SUBCLASS_OF)))
+        (set! s (assert-true arena s "RDFS_LABEL IRI is valid"
+          (term-eq rdfs-label (make-iri arena "http://www.w3.org/2000/01/rdf-schema#label"))))
+        (set! s (assert-true arena s "RDFS_CLASS IRI is valid"
+          (term-eq rdfs-class (make-iri arena "http://www.w3.org/2000/01/rdf-schema#Class"))))
+        (set! s (assert-true arena s "RDFS_SUBCLASS_OF IRI is valid"
+          (term-eq rdfs-subclass (make-iri arena "http://www.w3.org/2000/01/rdf-schema#subClassOf")))))
+
+      ;; Test OWL vocabulary
+      (println "")
+      (println "-- OWL Vocabulary --")
+      (let ((owl-same-as (make-iri arena OWL_SAME_AS))
+            (owl-class (make-iri arena OWL_CLASS))
+            (owl-thing (make-iri arena OWL_THING)))
+        (set! s (assert-true arena s "OWL_SAME_AS IRI is valid"
+          (term-eq owl-same-as (make-iri arena "http://www.w3.org/2002/07/owl#sameAs"))))
+        (set! s (assert-true arena s "OWL_CLASS IRI is valid"
+          (term-eq owl-class (make-iri arena "http://www.w3.org/2002/07/owl#Class"))))
+        (set! s (assert-true arena s "OWL_THING IRI is valid"
+          (term-eq owl-thing (make-iri arena "http://www.w3.org/2002/07/owl#Thing")))))
+
+      ;; Test FOAF vocabulary
+      (println "")
+      (println "-- FOAF Vocabulary --")
+      (let ((foaf-person (make-iri arena FOAF_PERSON))
+            (foaf-name (make-iri arena FOAF_NAME))
+            (foaf-knows (make-iri arena FOAF_KNOWS))
+            (foaf-mbox (make-iri arena FOAF_MBOX)))
+        (set! s (assert-true arena s "FOAF_PERSON IRI is valid"
+          (term-eq foaf-person (make-iri arena "http://xmlns.com/foaf/0.1/Person"))))
+        (set! s (assert-true arena s "FOAF_NAME IRI is valid"
+          (term-eq foaf-name (make-iri arena "http://xmlns.com/foaf/0.1/name"))))
+        (set! s (assert-true arena s "FOAF_KNOWS IRI is valid"
+          (term-eq foaf-knows (make-iri arena "http://xmlns.com/foaf/0.1/knows"))))
+        (set! s (assert-true arena s "FOAF_MBOX IRI is valid"
+          (term-eq foaf-mbox (make-iri arena "http://xmlns.com/foaf/0.1/mbox")))))
+
+      ;; Test XSD vocabulary
+      (println "")
+      (println "-- XSD Vocabulary --")
+      (let ((xsd-string (make-iri arena XSD_STRING))
+            (xsd-integer (make-iri arena XSD_INTEGER)))
+        (set! s (assert-true arena s "XSD_STRING IRI is valid"
+          (term-eq xsd-string (make-iri arena "http://www.w3.org/2001/XMLSchema#string"))))
+        (set! s (assert-true arena s "XSD_INTEGER IRI is valid"
+          (term-eq xsd-integer (make-iri arena "http://www.w3.org/2001/XMLSchema#integer")))))
+
+      ;; Build a small knowledge graph using standard terms
+      (println "")
+      (println "-- Building Knowledge Graph with Standard Vocabulary --")
+      (let ((rdf-type (make-iri arena RDF_TYPE))
+            (foaf-person (make-iri arena FOAF_PERSON))
+            (foaf-name (make-iri arena FOAF_NAME))
+            (foaf-knows (make-iri arena FOAF_KNOWS))
+            (foaf-mbox (make-iri arena FOAF_MBOX))
+            (rdfs-label (make-iri arena RDFS_LABEL))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (alice-name (make-literal arena "Alice Smith" (none) (none)))
+            (bob-name (make-literal arena "Bob Jones" (none) (none)))
+            (alice-email (make-iri arena "mailto:alice@example.org")))
+        (let ((mut g (make-graph arena)))
+          ;; Alice is a Person
+          (set! g (graph-add arena g (make-triple arena alice rdf-type foaf-person)))
+          ;; Alice has name "Alice Smith"
+          (set! g (graph-add arena g (make-triple arena alice foaf-name alice-name)))
+          ;; Alice has email
+          (set! g (graph-add arena g (make-triple arena alice foaf-mbox alice-email)))
+          ;; Bob is a Person
+          (set! g (graph-add arena g (make-triple arena bob rdf-type foaf-person)))
+          ;; Bob has name "Bob Jones"
+          (set! g (graph-add arena g (make-triple arena bob foaf-name bob-name)))
+          ;; Alice knows Bob
+          (set! g (graph-add arena g (make-triple arena alice foaf-knows bob)))
+
+          ;; Verify graph structure
+          (set! s (assert-eq-int arena s "Knowledge graph has 6 triples"
+            6 (graph-size g)))
+
+          ;; Query: find all Persons
+          (let ((no-opt (Option Term) (none)))
+            (let ((persons (graph-match arena g no-opt (some rdf-type) (some foaf-person))))
+              (set! s (assert-eq-int arena s "2 entities are of type foaf:Person"
+                2 (graph-size persons)))))
+
+          ;; Query: find who Alice knows
+          (let ((no-opt (Option Term) (none)))
+            (let ((alice-friends (graph-match arena g (some alice) (some foaf-knows) no-opt)))
+              (set! s (assert-eq-int arena s "Alice knows 1 person"
+                1 (graph-size alice-friends)))))
+
+          ;; Query: find all names
+          (let ((no-opt (Option Term) (none)))
+            (let ((names (graph-match arena g no-opt (some foaf-name) no-opt)))
+              (set! s (assert-eq-int arena s "2 entities have names"
+                2 (graph-size names)))))))
+
+      ;; Test class hierarchy with RDFS
+      (println "")
+      (println "-- RDFS Class Hierarchy --")
+      (let ((rdf-type (make-iri arena RDF_TYPE))
+            (rdfs-class (make-iri arena RDFS_CLASS))
+            (rdfs-subclass (make-iri arena RDFS_SUBCLASS_OF))
+            (owl-thing (make-iri arena OWL_THING))
+            (foaf-person (make-iri arena FOAF_PERSON))
+            (foaf-agent (make-iri arena "http://xmlns.com/foaf/0.1/Agent")))
+        (let ((mut g (make-graph arena)))
+          ;; foaf:Person is a class
+          (set! g (graph-add arena g (make-triple arena foaf-person rdf-type rdfs-class)))
+          ;; foaf:Agent is a class
+          (set! g (graph-add arena g (make-triple arena foaf-agent rdf-type rdfs-class)))
+          ;; foaf:Person subClassOf foaf:Agent
+          (set! g (graph-add arena g (make-triple arena foaf-person rdfs-subclass foaf-agent)))
+          ;; foaf:Agent subClassOf owl:Thing
+          (set! g (graph-add arena g (make-triple arena foaf-agent rdfs-subclass owl-thing)))
+
+          (set! s (assert-eq-int arena s "Class hierarchy has 4 triples"
+            4 (graph-size g)))
+
+          ;; Query: find subclasses of foaf:Agent
+          (let ((no-opt (Option Term) (none)))
+            (let ((subclasses (graph-match arena g no-opt (some rdfs-subclass) (some foaf-agent))))
+              (set! s (assert-eq-int arena s "1 class is subclass of foaf:Agent"
+                1 (graph-size subclasses)))))))
+
+      (test-summary arena s)
+      0))))

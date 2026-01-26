@@ -1,0 +1,195 @@
+(module test-indexed-graph
+  (@doc "Tests for indexed graph: O(1) lookups and efficient pattern matching")
+
+  (import rdf (Term make-iri make-literal make-triple term-eq triple-eq triple-subject))
+  (import index
+    (indexed-graph-create indexed-graph-add indexed-graph-contains
+     indexed-graph-match indexed-graph-size indexed-graph-subjects indexed-graph-objects))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all indexed graph tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== Indexed Graph Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test empty indexed graph
+      (println "-- Empty Indexed Graph --")
+      (let ((g (indexed-graph-create arena)))
+        (set! s (assert-eq-int arena s "Empty indexed graph has size 0"
+          0 (indexed-graph-size g))))
+
+      ;; Test adding triples
+      (println "")
+      (println "-- Adding Triples --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (bob (make-iri arena "http://example.org/bob")))
+        (let ((t (make-triple arena alice knows bob)))
+          (let ((g1 (indexed-graph-add arena g t)))
+            (set! s (assert-eq-int arena s "Indexed graph with one triple has size 1"
+              1 (indexed-graph-size g1))))))
+
+      ;; Test O(1) contains lookup
+      (println "")
+      (println "-- O(1) Contains Lookup --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice knows carol))
+              (t-not (make-triple arena bob knows carol)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (set! s (assert-true arena s "Contains finds existing triple (alice knows bob)"
+                (indexed-graph-contains g2 t1)))
+              (set! s (assert-true arena s "Contains finds existing triple (alice knows carol)"
+                (indexed-graph-contains g2 t2)))
+              (set! s (assert-false arena s "Contains returns false for non-existent triple"
+                (indexed-graph-contains g2 t-not)))))))
+
+      ;; Test indexed-graph-match with subject bound
+      (println "")
+      (println "-- Indexed Match: Subject Bound --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (likes (make-iri arena "http://example.org/likes")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice likes bob))
+              (t3 (make-triple arena bob knows alice)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((g3 (indexed-graph-add arena g2 t3)))
+                (let ((no-opt (Option Term) (none)))
+                  (let ((matches (indexed-graph-match arena g3 (some alice) no-opt no-opt)))
+                    (set! s (assert-eq-int arena s "Subject-bound match returns 2 triples"
+                      2 (list-len matches))))))))))
+
+      ;; Test indexed-graph-match with predicate bound
+      (println "")
+      (println "-- Indexed Match: Predicate Bound --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (likes (make-iri arena "http://example.org/likes")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena bob knows carol))
+              (t3 (make-triple arena alice likes bob)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((g3 (indexed-graph-add arena g2 t3)))
+                (let ((no-opt (Option Term) (none)))
+                  (let ((matches (indexed-graph-match arena g3 no-opt (some knows) no-opt)))
+                    (set! s (assert-eq-int arena s "Predicate-bound match returns 2 triples"
+                      2 (list-len matches))))))))))
+
+      ;; Test indexed-graph-match with object bound
+      (println "")
+      (println "-- Indexed Match: Object Bound --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (knows (make-iri arena "http://example.org/knows"))
+            (likes (make-iri arena "http://example.org/likes")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice likes bob)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((no-opt (Option Term) (none)))
+                (let ((matches (indexed-graph-match arena g2 no-opt no-opt (some bob))))
+                  (set! s (assert-eq-int arena s "Object-bound match returns 2 triples"
+                    2 (list-len matches)))))))))
+
+      ;; Test indexed-graph-match with subject and predicate bound
+      (println "")
+      (println "-- Indexed Match: Subject + Predicate Bound --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice knows carol)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((no-opt (Option Term) (none)))
+                (let ((matches (indexed-graph-match arena g2 (some alice) (some knows) no-opt)))
+                  (set! s (assert-eq-int arena s "Subject+predicate bound match returns 2 triples"
+                    2 (list-len matches)))))))))
+
+      ;; Test indexed-graph-subjects helper
+      (println "")
+      (println "-- indexed-graph-subjects Helper --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (type-pred (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"))
+            (person (make-iri arena "http://example.org/Person")))
+        (let ((t1 (make-triple arena alice type-pred person))
+              (t2 (make-triple arena bob type-pred person))
+              (t3 (make-triple arena carol type-pred person)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((g3 (indexed-graph-add arena g2 t3)))
+                (let ((subjects (indexed-graph-subjects arena g3 type-pred person)))
+                  (set! s (assert-eq-int arena s "indexed-graph-subjects returns all 3 persons"
+                    3 (list-len subjects)))))))))
+
+      ;; Test indexed-graph-objects helper
+      (println "")
+      (println "-- indexed-graph-objects Helper --")
+      (let ((g (indexed-graph-create arena))
+            (alice (make-iri arena "http://example.org/alice"))
+            (bob (make-iri arena "http://example.org/bob"))
+            (carol (make-iri arena "http://example.org/carol"))
+            (knows (make-iri arena "http://example.org/knows")))
+        (let ((t1 (make-triple arena alice knows bob))
+              (t2 (make-triple arena alice knows carol)))
+          (let ((g1 (indexed-graph-add arena g t1)))
+            (let ((g2 (indexed-graph-add arena g1 t2)))
+              (let ((objects (indexed-graph-objects arena g2 alice knows)))
+                (set! s (assert-eq-int arena s "indexed-graph-objects returns alice's 2 friends"
+                  2 (list-len objects))))))))
+
+      ;; Test exact match (all three bound)
+      (println "")
+      (println "-- Indexed Match: All Bound (Exact) --")
+      (let ((g (indexed-graph-create arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (pred (make-iri arena "http://example.org/p"))
+            (obj (make-iri arena "http://example.org/o")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (indexed-graph-add arena g t)))
+            (let ((matches (indexed-graph-match arena g1 (some subj) (some pred) (some obj))))
+              (set! s (assert-eq-int arena s "Exact indexed match returns 1 triple"
+                1 (list-len matches)))))))
+
+      ;; Test no matches
+      (println "")
+      (println "-- Indexed Match: No Matches --")
+      (let ((g (indexed-graph-create arena))
+            (subj (make-iri arena "http://example.org/s"))
+            (pred (make-iri arena "http://example.org/p"))
+            (obj (make-iri arena "http://example.org/o"))
+            (other (make-iri arena "http://example.org/other")))
+        (let ((t (make-triple arena subj pred obj)))
+          (let ((g1 (indexed-graph-add arena g t)))
+            (let ((no-opt (Option Term) (none)))
+              (let ((matches (indexed-graph-match arena g1 (some other) no-opt no-opt)))
+                (set! s (assert-eq-int arena s "Non-existent subject returns 0 matches"
+                  0 (list-len matches))))))))
+
+      (test-summary arena s)
+      0))))

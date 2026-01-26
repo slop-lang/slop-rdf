@@ -1,0 +1,138 @@
+(module test-rdf-list
+  (@doc "Tests for RDF list traversal utilities")
+
+  (import rdf (Term make-iri make-triple term-eq make-graph graph-add))
+  (import index (indexed-graph-create indexed-graph-add))
+  (import list
+    (rdf-list-elements rdf-list-elements-indexed rdf-list-contains rdf-list-length))
+  (import vocab (RDF_FIRST RDF_REST RDF_NIL))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all RDF list tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== RDF List Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test manual RDF list construction and traversal
+      (println "-- Manual RDF List Construction --")
+      (let ((first-pred (make-iri arena RDF_FIRST))
+            (rest-pred (make-iri arena RDF_REST))
+            (nil-term (make-iri arena RDF_NIL))
+            (node1 (make-iri arena "http://example.org/_n1"))
+            (node2 (make-iri arena "http://example.org/_n2"))
+            (node3 (make-iri arena "http://example.org/_n3"))
+            (item1 (make-iri arena "http://example.org/a"))
+            (item2 (make-iri arena "http://example.org/b"))
+            (item3 (make-iri arena "http://example.org/c")))
+        ;; Build list: (a b c)
+        (let ((mut g (make-graph arena)))
+          ;; node1 -> first: a, rest: node2
+          (set! g (graph-add arena g (make-triple arena node1 first-pred item1)))
+          (set! g (graph-add arena g (make-triple arena node1 rest-pred node2)))
+          ;; node2 -> first: b, rest: node3
+          (set! g (graph-add arena g (make-triple arena node2 first-pred item2)))
+          (set! g (graph-add arena g (make-triple arena node2 rest-pred node3)))
+          ;; node3 -> first: c, rest: nil
+          (set! g (graph-add arena g (make-triple arena node3 first-pred item3)))
+          (set! g (graph-add arena g (make-triple arena node3 rest-pred nil-term)))
+
+          ;; Test rdf-list-elements
+          (let ((elements (rdf-list-elements arena g node1)))
+            (set! s (assert-eq-int arena s "List has 3 elements"
+              3 (list-len elements)))
+            ;; Check first element
+            (match (list-get elements 0)
+              ((some e) (set! s (assert-true arena s "First element is 'a'" (term-eq e item1))))
+              ((none) (set! s (assert-true arena s "First element exists" false))))
+            ;; Check second element
+            (match (list-get elements 1)
+              ((some e) (set! s (assert-true arena s "Second element is 'b'" (term-eq e item2))))
+              ((none) (set! s (assert-true arena s "Second element exists" false))))
+            ;; Check third element
+            (match (list-get elements 2)
+              ((some e) (set! s (assert-true arena s "Third element is 'c'" (term-eq e item3))))
+              ((none) (set! s (assert-true arena s "Third element exists" false)))))
+
+          ;; Test rdf-list-contains
+          (println "")
+          (println "-- rdf-list-contains --")
+          (set! s (assert-true arena s "List contains 'a'"
+            (rdf-list-contains arena g node1 item1)))
+          (set! s (assert-true arena s "List contains 'b'"
+            (rdf-list-contains arena g node1 item2)))
+          (set! s (assert-true arena s "List contains 'c'"
+            (rdf-list-contains arena g node1 item3)))
+          (let ((item-d (make-iri arena "http://example.org/d")))
+            (set! s (assert-false arena s "List does not contain 'd'"
+              (rdf-list-contains arena g node1 item-d))))
+
+          ;; Test rdf-list-length
+          (println "")
+          (println "-- rdf-list-length --")
+          (set! s (assert-eq-int arena s "List length is 3"
+            3 (rdf-list-length arena g node1)))))
+
+      ;; Test with IndexedGraph
+      (println "")
+      (println "-- RDF List with IndexedGraph --")
+      (let ((first-pred (make-iri arena RDF_FIRST))
+            (rest-pred (make-iri arena RDF_REST))
+            (nil-term (make-iri arena RDF_NIL))
+            (node1 (make-iri arena "http://example.org/_m1"))
+            (node2 (make-iri arena "http://example.org/_m2"))
+            (item1 (make-iri arena "http://example.org/x"))
+            (item2 (make-iri arena "http://example.org/y")))
+        ;; Build list: (x y)
+        (let ((mut g (indexed-graph-create arena)))
+          (set! g (indexed-graph-add arena g (make-triple arena node1 first-pred item1)))
+          (set! g (indexed-graph-add arena g (make-triple arena node1 rest-pred node2)))
+          (set! g (indexed-graph-add arena g (make-triple arena node2 first-pred item2)))
+          (set! g (indexed-graph-add arena g (make-triple arena node2 rest-pred nil-term)))
+
+          ;; Test rdf-list-elements-indexed
+          (let ((elements (rdf-list-elements-indexed arena g node1)))
+            (set! s (assert-eq-int arena s "Indexed list has 2 elements"
+              2 (list-len elements)))
+            (match (list-get elements 0)
+              ((some e) (set! s (assert-true arena s "First indexed element is 'x'" (term-eq e item1))))
+              ((none) (set! s (assert-true arena s "First indexed element exists" false))))
+            (match (list-get elements 1)
+              ((some e) (set! s (assert-true arena s "Second indexed element is 'y'" (term-eq e item2))))
+              ((none) (set! s (assert-true arena s "Second indexed element exists" false)))))))
+
+      ;; Test empty list (just rdf:nil)
+      (println "")
+      (println "-- Empty RDF List --")
+      (let ((nil-term (make-iri arena RDF_NIL))
+            (g (make-graph arena)))
+        (let ((elements (rdf-list-elements arena g nil-term)))
+          (set! s (assert-eq-int arena s "Empty list has 0 elements"
+            0 (list-len elements))))
+        (set! s (assert-eq-int arena s "Empty list length is 0"
+          0 (rdf-list-length arena g nil-term))))
+
+      ;; Test single element list
+      (println "")
+      (println "-- Single Element RDF List --")
+      (let ((first-pred (make-iri arena RDF_FIRST))
+            (rest-pred (make-iri arena RDF_REST))
+            (nil-term (make-iri arena RDF_NIL))
+            (node (make-iri arena "http://example.org/_single"))
+            (item (make-iri arena "http://example.org/only")))
+        (let ((mut g (make-graph arena)))
+          (set! g (graph-add arena g (make-triple arena node first-pred item)))
+          (set! g (graph-add arena g (make-triple arena node rest-pred nil-term)))
+          (let ((elements (rdf-list-elements arena g node)))
+            (set! s (assert-eq-int arena s "Single-element list has 1 element"
+              1 (list-len elements)))
+            (match (list-get elements 0)
+              ((some e) (set! s (assert-true arena s "Single element is correct" (term-eq e item))))
+              ((none) (set! s (assert-true arena s "Single element exists" false)))))))
+
+      (test-summary arena s)
+      0))))

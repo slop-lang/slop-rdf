@@ -1,0 +1,309 @@
+(module test-xsd
+  (@doc "Tests for XSD datatype parsing and value-space equality")
+
+  (import rdf (Literal))
+  (import xsd
+    (XsdType XsdValue XsdError
+     xsd-parse-type xsd-parse-value xsd-values-equal xsd-types-compatible
+     literal-values-equal))
+  (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE))
+  (import test-utils (TestState test-state-new assert-true assert-false assert-eq-bool test-summary))
+
+  (fn main ()
+    (@intent "Run all XSD tests")
+    (@spec (() -> Int))
+    (with-arena 65536
+
+    (println "=== XSD Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test xsd-parse-type
+      (println "-- xsd-parse-type --")
+      (set! s (assert-true arena s "Parse xsd:string type"
+        (== (xsd-parse-type XSD_STRING) 'xsd-string)))
+      (set! s (assert-true arena s "Parse xsd:integer type"
+        (== (xsd-parse-type XSD_INTEGER) 'xsd-integer)))
+      (set! s (assert-true arena s "Parse xsd:boolean type"
+        (== (xsd-parse-type XSD_BOOLEAN) 'xsd-boolean)))
+      (set! s (assert-true arena s "Parse xsd:decimal type"
+        (== (xsd-parse-type XSD_DECIMAL) 'xsd-decimal)))
+      (set! s (assert-true arena s "Parse xsd:float type"
+        (== (xsd-parse-type XSD_FLOAT) 'xsd-float)))
+      (set! s (assert-true arena s "Parse xsd:double type"
+        (== (xsd-parse-type XSD_DOUBLE) 'xsd-double)))
+      (set! s (assert-true arena s "Unknown type returns xsd-unknown"
+        (== (xsd-parse-type "http://example.org/custom") 'xsd-unknown)))
+
+      ;; Test xsd-parse-value for strings
+      (println "")
+      (println "-- xsd-parse-value: Strings --")
+      (match (xsd-parse-value arena "hello world" 'xsd-string)
+        ((ok val)
+          (match val
+            ((xsd-string-val str)
+              (set! s (assert-true arena s "String value parsed correctly"
+                (string-eq str "hello world"))))
+            (_ (set! s (assert-true arena s "String parses to string value" false)))))
+        ((error _) (set! s (assert-true arena s "String parsing should succeed" false))))
+
+      ;; Test xsd-parse-value for integers
+      (println "")
+      (println "-- xsd-parse-value: Integers --")
+      (match (xsd-parse-value arena "42" 'xsd-integer)
+        ((ok val)
+          (match val
+            ((xsd-integer-val i)
+              (set! s (assert-true arena s "Integer value 42 parsed correctly" (== i 42))))
+            (_ (set! s (assert-true arena s "Integer parses to integer value" false)))))
+        ((error _) (set! s (assert-true arena s "Integer parsing should succeed" false))))
+
+      (match (xsd-parse-value arena "-123" 'xsd-integer)
+        ((ok val)
+          (match val
+            ((xsd-integer-val i)
+              (set! s (assert-true arena s "Negative integer -123 parsed correctly" (== i -123))))
+            (_ (set! s (assert-true arena s "Negative integer parses to integer value" false)))))
+        ((error _) (set! s (assert-true arena s "Negative integer parsing should succeed" false))))
+
+      ;; Test invalid integer
+      (match (xsd-parse-value arena "not-a-number" 'xsd-integer)
+        ((ok _) (set! s (assert-true arena s "Invalid integer should fail" false)))
+        ((error e)
+          (set! s (assert-true arena s "Invalid integer returns error"
+            (== e 'invalid-lexical-form)))))
+
+      ;; Test xsd-parse-value for booleans
+      (println "")
+      (println "-- xsd-parse-value: Booleans --")
+      (match (xsd-parse-value arena "true" 'xsd-boolean)
+        ((ok val)
+          (match val
+            ((xsd-boolean-val b)
+              (set! s (assert-true arena s "Boolean 'true' parsed correctly" (== b true))))
+            (_ (set! s (assert-true arena s "Boolean parses to boolean value" false)))))
+        ((error _) (set! s (assert-true arena s "Boolean 'true' parsing should succeed" false))))
+
+      (match (xsd-parse-value arena "false" 'xsd-boolean)
+        ((ok val)
+          (match val
+            ((xsd-boolean-val b)
+              (set! s (assert-true arena s "Boolean 'false' parsed correctly" (== b false))))
+            (_ (set! s (assert-true arena s "Boolean parses to boolean value" false)))))
+        ((error _) (set! s (assert-true arena s "Boolean 'false' parsing should succeed" false))))
+
+      ;; Test invalid boolean
+      (match (xsd-parse-value arena "yes" 'xsd-boolean)
+        ((ok _) (set! s (assert-true arena s "Invalid boolean should fail" false)))
+        ((error e)
+          (set! s (assert-true arena s "Invalid boolean returns error"
+            (== e 'invalid-lexical-form)))))
+
+      ;; Test xsd-parse-value for decimal
+      (println "")
+      (println "-- xsd-parse-value: Decimal --")
+      (match (xsd-parse-value arena "3.14159" 'xsd-decimal)
+        ((ok val)
+          (match val
+            ((xsd-decimal-val d)
+              (set! s (assert-true arena s "Decimal parsed (approximate check)" (> d 3.0))))
+            (_ (set! s (assert-true arena s "Decimal parses to decimal value" false)))))
+        ((error _) (set! s (assert-true arena s "Decimal parsing should succeed" false))))
+
+      ;; Test xsd-parse-value for float
+      (println "")
+      (println "-- xsd-parse-value: Float --")
+      (match (xsd-parse-value arena "2.5" 'xsd-float)
+        ((ok val)
+          (match val
+            ((xsd-float-val f)
+              (set! s (assert-true arena s "Float parsed correctly" (> (cast Float f) 2.0))))
+            (_ (set! s (assert-true arena s "Float parses to float value" false)))))
+        ((error _) (set! s (assert-true arena s "Float parsing should succeed" false))))
+
+      ;; Test xsd-parse-value for double
+      (println "")
+      (println "-- xsd-parse-value: Double --")
+      (match (xsd-parse-value arena "1.7976931348623157e+308" 'xsd-double)
+        ((ok val)
+          (match val
+            ((xsd-double-val d)
+              (set! s (assert-true arena s "Double parsed (large value)" (> d 1.0e+307))))
+            (_ (set! s (assert-true arena s "Double parses to double value" false)))))
+        ((error _) (set! s (assert-true arena s "Double parsing should succeed" false))))
+
+      ;; Test xsd-values-equal for same types
+      (println "")
+      (println "-- xsd-values-equal: Same Types --")
+      (match (xsd-parse-value arena "42" 'xsd-integer)
+        ((ok val1)
+          (match (xsd-parse-value arena "42" 'xsd-integer)
+            ((ok val2)
+              (set! s (assert-true arena s "Equal integers are equal"
+                (xsd-values-equal val1 val2))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      (match (xsd-parse-value arena "42" 'xsd-integer)
+        ((ok val1)
+          (match (xsd-parse-value arena "43" 'xsd-integer)
+            ((ok val2)
+              (set! s (assert-false arena s "Different integers are not equal"
+                (xsd-values-equal val1 val2))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      (match (xsd-parse-value arena "foo" 'xsd-string)
+        ((ok val1)
+          (match (xsd-parse-value arena "foo" 'xsd-string)
+            ((ok val2)
+              (set! s (assert-true arena s "Equal strings are equal"
+                (xsd-values-equal val1 val2))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      (match (xsd-parse-value arena "true" 'xsd-boolean)
+        ((ok val1)
+          (match (xsd-parse-value arena "true" 'xsd-boolean)
+            ((ok val2)
+              (set! s (assert-true arena s "Equal booleans are equal"
+                (xsd-values-equal val1 val2))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      ;; Test xsd-values-equal for cross-numeric comparison
+      (println "")
+      (println "-- xsd-values-equal: Cross-Numeric Comparison --")
+      (match (xsd-parse-value arena "42" 'xsd-integer)
+        ((ok int-val)
+          (match (xsd-parse-value arena "42.0" 'xsd-decimal)
+            ((ok dec-val)
+              (set! s (assert-true arena s "Integer 42 equals decimal 42.0"
+                (xsd-values-equal int-val dec-val))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      (match (xsd-parse-value arena "10" 'xsd-integer)
+        ((ok int-val)
+          (match (xsd-parse-value arena "10.0" 'xsd-double)
+            ((ok dbl-val)
+              (set! s (assert-true arena s "Integer 10 equals double 10.0"
+                (xsd-values-equal int-val dbl-val))))
+            ((error _) (do))))
+        ((error _) (do)))
+
+      ;; Test xsd-types-compatible
+      (println "")
+      (println "-- xsd-types-compatible --")
+      (set! s (assert-true arena s "Same types are compatible"
+        (xsd-types-compatible 'xsd-integer 'xsd-integer)))
+      (set! s (assert-true arena s "Integer and decimal are compatible"
+        (xsd-types-compatible 'xsd-integer 'xsd-decimal)))
+      (set! s (assert-true arena s "Float and double are compatible"
+        (xsd-types-compatible 'xsd-float 'xsd-double)))
+      (set! s (assert-true arena s "Integer and float are compatible"
+        (xsd-types-compatible 'xsd-integer 'xsd-float)))
+      (set! s (assert-false arena s "String and integer are not compatible"
+        (xsd-types-compatible 'xsd-string 'xsd-integer)))
+      (set! s (assert-false arena s "Boolean and integer are not compatible"
+        (xsd-types-compatible 'xsd-boolean 'xsd-integer)))
+
+      ;; Test literal-values-equal
+      (println "")
+      (println "-- literal-values-equal --")
+      ;; Same typed literals
+      (let ((lit1 (record-new Literal
+                    (value "42")
+                    (datatype (some XSD_INTEGER))
+                    (lang (none))))
+            (lit2 (record-new Literal
+                    (value "42")
+                    (datatype (some XSD_INTEGER))
+                    (lang (none)))))
+        (match (literal-values-equal arena lit1 lit2)
+          ((ok result)
+            (set! s (assert-true arena s "Same typed literals are equal" result)))
+          ((error _)
+            (set! s (assert-true arena s "literal-values-equal should succeed" false)))))
+
+      ;; Cross-numeric literals
+      (let ((int-lit (record-new Literal
+                       (value "100")
+                       (datatype (some XSD_INTEGER))
+                       (lang (none))))
+            (dec-lit (record-new Literal
+                       (value "100.0")
+                       (datatype (some XSD_DECIMAL))
+                       (lang (none)))))
+        (match (literal-values-equal arena int-lit dec-lit)
+          ((ok result)
+            (set! s (assert-true arena s "Integer 100 and decimal 100.0 literals are equal" result)))
+          ((error _)
+            (set! s (assert-true arena s "Cross-numeric comparison should succeed" false)))))
+
+      ;; Language-tagged literals
+      (let ((en-lit (record-new Literal
+                      (value "hello")
+                      (datatype (none))
+                      (lang (some "en"))))
+            (en-lit2 (record-new Literal
+                       (value "hello")
+                       (datatype (none))
+                       (lang (some "en")))))
+        (match (literal-values-equal arena en-lit en-lit2)
+          ((ok result)
+            (set! s (assert-true arena s "Same language literals are equal" result)))
+          ((error _)
+            (set! s (assert-true arena s "Language literal comparison should succeed" false)))))
+
+      ;; Different language tags
+      (let ((en-lit (record-new Literal
+                      (value "hello")
+                      (datatype (none))
+                      (lang (some "en"))))
+            (fr-lit (record-new Literal
+                      (value "hello")
+                      (datatype (none))
+                      (lang (some "fr")))))
+        (match (literal-values-equal arena en-lit fr-lit)
+          ((ok result)
+            (set! s (assert-false arena s "Different language tags are not equal" result)))
+          ((error _)
+            (set! s (assert-true arena s "Language comparison should succeed" false)))))
+
+      ;; Plain literals (no datatype or lang)
+      (let ((plain1 (record-new Literal
+                      (value "test")
+                      (datatype (none))
+                      (lang (none))))
+            (plain2 (record-new Literal
+                      (value "test")
+                      (datatype (none))
+                      (lang (none)))))
+        (match (literal-values-equal arena plain1 plain2)
+          ((ok result)
+            (set! s (assert-true arena s "Same plain literals are equal" result)))
+          ((error _)
+            (set! s (assert-true arena s "Plain literal comparison should succeed" false)))))
+
+      ;; Invalid lexical form error
+      (println "")
+      (println "-- Error Handling for Invalid Lexical Forms --")
+      (let ((bad-int-lit (record-new Literal
+                           (value "not-an-int")
+                           (datatype (some XSD_INTEGER))
+                           (lang (none))))
+            (good-int-lit (record-new Literal
+                            (value "42")
+                            (datatype (some XSD_INTEGER))
+                            (lang (none)))))
+        (match (literal-values-equal arena bad-int-lit good-int-lit)
+          ((ok _)
+            (set! s (assert-true arena s "Invalid integer should return error" false)))
+          ((error e)
+            (set! s (assert-true arena s "Invalid lexical form returns error"
+              (== e 'invalid-lexical-form))))))
+
+      (test-summary arena s)
+      0))))
