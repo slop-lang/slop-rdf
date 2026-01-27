@@ -1,0 +1,385 @@
+;; n3.slop - Notation3 (N3) format parser for RDF
+;; N3 is a superset of Turtle with formulas, rules, and additional syntax
+(module n3
+  (export
+    N3ParseContext
+    Formula
+    FormulaId
+    N3Graph
+    parse-n3-string
+    parse-n3-file
+    parse-formula
+    parse-path-expression
+    parse-quick-variable
+    is-formula-start
+    is-path-operator)
+
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add))
+  (import common (ParseState ParseError ParseErrorKind Position make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
+  (import ttl (PrefixMap TtlParseContext make-prefix-map prefix-map-add prefix-map-lookup make-ttl-context parse-iri-ref parse-prefixed-name parse-blank-node parse-literal parse-term parse-directive parse-triple is-pn-chars-base is-pn-chars))
+  (import io/file (file-open file-read-all file-close FileMode FileError))
+  (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3-specific types
+  ;; ---------------------------------------------------------------------------
+
+  (type FormulaId (Int 0 ..))
+
+  (type Formula (record
+    (id FormulaId)
+    (graph Graph)))
+
+  (type QuickVar (record
+    (name String)))
+
+  (type N3Term (union
+    (n3-rdf Term)
+    (n3-formula Formula)
+    (n3-quick-var QuickVar)))
+
+  (type N3Triple (record
+    (subject N3Term)
+    (predicate N3Term)
+    (object N3Term)))
+
+  (type N3Graph (record
+    (triples (List N3Triple))
+    (formulas (List Formula))
+    (size (Int 0 ..))))
+
+  (type N3ParseContext (record
+    (ttl-ctx TtlParseContext)
+    (formula-counter FormulaId)
+    (in-formula Bool)
+    (current-formula-id (Option FormulaId))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Context management
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-n3-context ((in arena Arena) (in input String))
+    (@intent "Create initial N3 parsing context")
+    (@spec ((Arena String) -> N3ParseContext))
+    (@alloc arena)
+    (@post {$result.formula-counter == 0})
+    (@post {$result.in-formula == false})
+    (@example
+      ("@prefix : <http://example.org/> .")
+      ->
+      (N3ParseContext (TtlParseContext ...) 0 false (none)))
+    (record-new N3ParseContext
+      (ttl-ctx (make-ttl-context arena input))
+      (formula-counter 0)
+      (in-formula false)
+      (current-formula-id (none))))
+
+  (fn context-gen-formula-id ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Generate a fresh formula ID and update counter")
+    (@spec ((Arena N3ParseContext) -> (record (id FormulaId) (ctx N3ParseContext))))
+    (@alloc arena)
+    (@post {$result.id == ctx.formula-counter})
+    (@post {$result.ctx.formula-counter == ctx.formula-counter + 1})
+    (hole (record (id FormulaId) (ctx N3ParseContext)) "Return current counter as id, increment counter in new ctx"
+      :complexity tier-1
+      :context (arena ctx record-new N3ParseContext)
+      :required ()))
+
+  (fn context-enter-formula ((in arena Arena) (mut ctx N3ParseContext) (in formula-id FormulaId))
+    (@intent "Enter formula parsing mode")
+    (@spec ((Arena N3ParseContext FormulaId) -> N3ParseContext))
+    (@alloc arena)
+    (@post {$result.in-formula == true})
+    (@post (match $result.current-formula-id ((some id) {id == formula-id}) ((none) false)))
+    (hole N3ParseContext "Set in-formula true and current-formula-id to formula-id"
+      :complexity tier-1
+      :context (arena ctx formula-id record-new N3ParseContext some)
+      :required ()))
+
+  (fn context-exit-formula ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Exit formula parsing mode")
+    (@spec ((Arena N3ParseContext) -> N3ParseContext))
+    (@alloc arena)
+    (@pre {ctx.in-formula == true})
+    (@post {$result.in-formula == false})
+    (@post (match $result.current-formula-id ((none) true) ((some _) false)))
+    (hole N3ParseContext "Set in-formula false and current-formula-id to none"
+      :complexity tier-1
+      :context (arena ctx record-new N3ParseContext none)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3-specific syntax detection
+  ;; ---------------------------------------------------------------------------
+
+  (fn is-formula-start ((in c (Int 0 .. 127)))
+    (@intent "Check if character starts a formula (opening brace)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (123) -> true)
+    (@example (60) -> false)
+    (== c 123))
+
+  (fn is-formula-end ((in c (Int 0 .. 127)))
+    (@intent "Check if character ends a formula (closing brace)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (125) -> true)
+    (@example (62) -> false)
+    (== c 125))
+
+  (fn is-path-operator ((in c (Int 0 .. 127)))
+    (@intent "Check if character is a path operator (! or ^)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (33) -> true)
+    (@example (94) -> true)
+    (@example (46) -> false)
+    (or (== c 33) (== c 94)))
+
+  (fn is-quick-var-start ((in c (Int 0 .. 127)))
+    (@intent "Check if character starts a quick variable (?)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (63) -> true)
+    (@example (95) -> false)
+    (== c 63))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Quick variable parsing (?varname)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-quick-variable ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse a quick variable: ?name")
+    (@spec ((Arena N3ParseContext) -> (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.ttl-ctx.state) == 63})
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
+    (hole (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)
+      "Consume '?', parse variable name, create QuickVar term"
+      :complexity tier-2
+      :context (arena ctx state-advance state-peek parse-while is-pn-chars record-new QuickVar N3Term)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Formula parsing { ... }
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-formula ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse a formula (quoted graph): { triples... }")
+    (@spec ((Arena N3ParseContext) -> (Result (record (formula Formula) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.ttl-ctx.state) == 123})
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "{ :s :p :o }" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (formula (Formula 0 (Graph ...))) (ctx ...))))
+    (hole (Result (record (formula Formula) (ctx N3ParseContext)) ParseError)
+      "Consume '{', generate formula id, parse triples until '}', create Formula"
+      :complexity tier-4
+      :context (arena ctx context-gen-formula-id context-enter-formula context-exit-formula state-advance state-peek skip-whitespace parse-n3-triple expect-char make-graph graph-add is-formula-end)
+      :required (context-gen-formula-id context-enter-formula context-exit-formula)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Path expressions (N3 paths: subject!predicate or subject^predicate)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-path-expression ((in arena Arena) (mut ctx N3ParseContext) (in base N3Term))
+    (@intent "Parse path expression starting from base term: base!pred or base^pred")
+    (@spec ((Arena N3ParseContext N3Term) -> (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext ... (ParseState "!:name" 0 1 1)) (n3-rdf (term-iri (IRI "http://example.org/person"))))
+      ->
+      (ok (record (term ...) (ctx ...))))
+    (hole (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)
+      "Parse ! (forward) or ^ (backward) path, generate intermediate blank nodes"
+      :complexity tier-3
+      :context (arena ctx base state-peek state-advance parse-n3-term is-path-operator context-gen-blank-id)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 term parsing (extends Turtle terms)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-n3-term ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse any N3 term: RDF term, formula, quick variable, or path")
+    (@spec ((Arena N3ParseContext) -> (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "<http://example.org/>" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-rdf (term-iri (IRI "http://example.org/")))) (ctx ...))))
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
+    (hole (Result (record (term N3Term) (ctx N3ParseContext)) ParseError)
+      "Dispatch: '{' formula, '?' quick-var, else Turtle term; then check for path operators"
+      :complexity tier-3
+      :context (arena ctx state-peek is-formula-start is-quick-var-start is-path-operator parse-formula parse-quick-variable parse-term parse-path-expression)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 triple parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-n3-triple ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse an N3 triple with extended term support")
+    (@spec ((Arena N3ParseContext) -> (Result (record (triple N3Triple) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext prefixes _ 0 (ParseState ":s :p :o ." 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (triple (N3Triple ...)) (ctx ...))))
+    (hole (Result (record (triple N3Triple) (ctx N3ParseContext)) ParseError)
+      "Parse subject, predicate, object as N3 terms with whitespace, consume '.'"
+      :complexity tier-3
+      :context (arena ctx parse-n3-term skip-whitespace expect-char record-new N3Triple make-parse-error)
+      :required (parse-n3-term)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 special predicates
+  ;; ---------------------------------------------------------------------------
+
+  (fn is-implication-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 implication predicate (=>)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (@example ((n3-rdf (term-iri (IRI "http://www.w3.org/2000/10/swap/log#implies")))) -> true)
+    (hole Bool "Check if term is log:implies IRI"
+      :complexity tier-1
+      :context (term)
+      :required ()))
+
+  (fn is-reverse-implication-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 reverse implication predicate (<=)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (hole Bool "Check if term is reverse log:implies"
+      :complexity tier-1
+      :context (term)
+      :required ()))
+
+  (fn is-equivalence-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 equivalence predicate (<=>)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (hole Bool "Check if term is log:equivalence IRI"
+      :complexity tier-1
+      :context (term)
+      :required ()))
+
+  (fn parse-implication ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse N3 implication: { antecedent } => { consequent }")
+    (@spec ((Arena N3ParseContext) -> (Result (record (triple N3Triple) (ctx N3ParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "{ :a :b :c } => { :d :e :f } ." 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (triple (N3Triple (n3-formula ...) ... (n3-formula ...))) (ctx ...))))
+    (hole (Result (record (triple N3Triple) (ctx N3ParseContext)) ParseError)
+      "Parse formula => formula as triple with log:implies predicate"
+      :complexity tier-3
+      :context (arena ctx parse-formula parse-n3-term skip-whitespace expect-char make-parse-error)
+      :required (parse-formula)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Built-in predicates
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-builtin-iri ((in arena Arena) (in local-name String))
+    (@intent "Create IRI for N3 built-in predicate in log: namespace")
+    (@spec ((Arena String) -> Term))
+    (@alloc arena)
+    (@example ("implies") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#implies")))
+    (@example ("notIncludes") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#notIncludes")))
+    (hole Term "Concatenate log namespace with local name, create IRI term"
+      :complexity tier-1
+      :context (arena local-name make-iri string-concat)
+      :required (make-iri)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Main parsing functions
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-n3-graph ((in arena Arena))
+    (@intent "Create an empty N3 graph")
+    (@spec ((Arena) -> N3Graph))
+    (@alloc arena)
+    (@post {$result.size == 0})
+    (@example () -> (N3Graph (list N3Triple) (list Formula) 0))
+    (record-new N3Graph
+      (triples (list-new arena N3Triple))
+      (formulas (list-new arena Formula))
+      (size 0)))
+
+  (fn n3-graph-add-triple ((in arena Arena) (mut g N3Graph) (in t N3Triple))
+    (@intent "Add an N3 triple to the graph")
+    (@spec ((Arena N3Graph N3Triple) -> N3Graph))
+    (@alloc arena)
+    (@post {$result.size >= g.size})
+    (hole N3Graph "Add triple to list, increment size"
+      :complexity tier-1
+      :context (arena g t list-push record-new N3Graph)
+      :required ()))
+
+  (fn n3-graph-add-formula ((in arena Arena) (mut g N3Graph) (in f Formula))
+    (@intent "Register a formula in the graph")
+    (@spec ((Arena N3Graph Formula) -> N3Graph))
+    (@alloc arena)
+    (hole N3Graph "Add formula to formulas list"
+      :complexity tier-1
+      :context (arena g f list-push record-new N3Graph)
+      :required ()))
+
+  (fn parse-n3-string ((in arena Arena) (in input String))
+    (@intent "Parse an N3 string into an N3 graph with formulas")
+    (@spec ((Arena String) -> (Result N3Graph ParseError)))
+    (@alloc arena)
+    (@pre {(string-len input) > 0})
+    (@example
+      ("@prefix : <http://example.org/> .\n:s :p :o .")
+      ->
+      (ok (N3Graph (list N3Triple ...) (list Formula) 1)))
+    (@example
+      ("{ :a :b :c } => { :d :e :f } .")
+      ->
+      (ok (N3Graph (list N3Triple ...) (list Formula ...) 1)))
+    (hole (Result N3Graph ParseError)
+      "Initialize context, loop parsing directives and N3 triples until EOF, collect formulas"
+      :complexity tier-4
+      :context (arena input make-n3-context make-n3-graph n3-graph-add-triple n3-graph-add-formula parse-directive parse-n3-triple skip-whitespace state-at-end state-peek)
+      :required (make-n3-context make-n3-graph parse-n3-triple)))
+
+  (fn parse-n3-file ((in arena Arena) (in path String))
+    (@intent "Parse an N3 file into an N3 graph")
+    (@spec ((Arena String) -> (Result N3Graph (union (parse-error ParseError) (file-error FileError)))))
+    (@alloc arena)
+    (@pre {(string-len path) > 0})
+    (@example
+      ("test.n3")
+      ->
+      (ok (N3Graph ...)))
+    (hole (Result N3Graph (union (parse-error ParseError) (file-error FileError)))
+      "Open file, read contents, close file, call parse-n3-string"
+      :complexity tier-2
+      :context (arena path file-open file-read-all file-close parse-n3-string)
+      :required (file-open file-read-all parse-n3-string)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Conversion to standard RDF
+  ;; ---------------------------------------------------------------------------
+
+  (fn n3-to-rdf-graph ((in arena Arena) (in n3g N3Graph))
+    (@intent "Convert N3 graph to standard RDF graph, flattening formulas to blank nodes")
+    (@spec ((Arena N3Graph) -> Graph))
+    (@alloc arena)
+    (hole Graph "Convert N3 triples to RDF triples, represent formulas as blank nodes with rdf:Graph type"
+      :complexity tier-3
+      :context (arena n3g make-graph graph-add make-triple make-blank for-each)
+      :required (make-graph))))
+

@@ -1,0 +1,414 @@
+;; ttl.slop - Turtle (TTL) format parser for RDF
+;; Implements W3C Turtle specification
+(module ttl
+  (export
+    PrefixMap
+    TtlParseContext
+    parse-ttl-string
+    parse-ttl-file
+    parse-iri-ref
+    parse-prefixed-name
+    parse-blank-node
+    parse-literal
+    parse-term
+    parse-triple
+    parse-directive)
+
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add))
+  (import common (ParseState ParseError ParseErrorKind Position make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
+  (import io/file (file-open file-read-all file-close FileMode FileError))
+  (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Types
+  ;; ---------------------------------------------------------------------------
+
+  (type PrefixBinding (record
+    (prefix String)
+    (iri String)))
+
+  (type PrefixMap (record
+    (bindings (List PrefixBinding))
+    (count (Int 0 ..))))
+
+  (type BlankNodeCounter (Int 0 ..))
+
+  (type TtlParseContext (record
+    (prefixes PrefixMap)
+    (base-iri (Option String))
+    (blank-counter BlankNodeCounter)
+    (state ParseState)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Prefix map operations
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-prefix-map ((in arena Arena))
+    (@intent "Create an empty prefix map")
+    (@spec ((Arena) -> PrefixMap))
+    (@alloc arena)
+    (@post {$result.count == 0})
+    (@example () -> (PrefixMap (list PrefixBinding) 0))
+    (record-new PrefixMap (bindings (list-new arena PrefixBinding)) (count 0)))
+
+  (fn prefix-map-add ((in arena Arena) (mut pm PrefixMap) (in prefix String) (in iri String))
+    (@intent "Add or update a prefix binding in the prefix map")
+    (@spec ((Arena PrefixMap String String) -> PrefixMap))
+    (@alloc arena)
+    (@post (>= $result.count pm.count))
+    (@example
+      ((PrefixMap (list PrefixBinding) 0) "ex" "http://example.org/")
+      ->
+      (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1))
+    (hole PrefixMap "Add prefix binding, update if exists, increment count if new"
+      :complexity tier-2
+      :context (arena pm prefix iri PrefixBinding record-new list-push)
+      :required ()))
+
+  (fn prefix-map-lookup ((in pm PrefixMap) (in prefix String))
+    (@intent "Look up IRI for a given prefix")
+    (@spec ((PrefixMap String) -> (Option String)))
+    (@pure)
+    (@example
+      ((PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) "ex")
+      ->
+      (some "http://example.org/"))
+    (@example
+      ((PrefixMap (list PrefixBinding) 0) "missing")
+      ->
+      (none))
+    (hole (Option String) "Search bindings for matching prefix, return IRI if found"
+      :complexity tier-2
+      :context (pm prefix string-eq for-each)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Context management
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-ttl-context ((in arena Arena) (in input String))
+    (@intent "Create initial Turtle parsing context")
+    (@spec ((Arena String) -> TtlParseContext))
+    (@alloc arena)
+    (@post {$result.blank-counter == 0})
+    (@example
+      ("@prefix ex: <http://example.org/> .")
+      ->
+      (TtlParseContext (PrefixMap (list PrefixBinding) 0) (none) 0 (ParseState "@prefix ex: <http://example.org/> ." 0 1 1)))
+    (record-new TtlParseContext
+      (prefixes (make-prefix-map arena))
+      (base-iri (none))
+      (blank-counter 0)
+      (state (make-parse-state arena input))))
+
+  (fn context-gen-blank-id ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Generate a fresh blank node ID and update counter")
+    (@spec ((Arena TtlParseContext) -> (record (id (Int 0 ..)) (ctx TtlParseContext))))
+    (@alloc arena)
+    (@post {$result.id == ctx.blank-counter})
+    (@post {$result.ctx.blank-counter == ctx.blank-counter + 1})
+    (hole (record (id (Int 0 ..)) (ctx TtlParseContext)) "Return current counter as id, increment counter in new ctx"
+      :complexity tier-1
+      :context (arena ctx record-new TtlParseContext)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; IRI parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-iri-ref ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse an IRI reference enclosed in angle brackets: <...>")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.state) == 60})
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "<http://example.org/foo>" 0 1 1)))
+      ->
+      (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Consume '<', parse until '>', validate IRI, create term"
+      :complexity tier-3
+      :context (arena ctx state-advance state-peek state-at-end parse-until make-iri make-parse-error Position expect-char)
+      :required (make-iri)))
+
+  (fn parse-prefixed-name ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a prefixed name (prefix:localname) and expand to full IRI")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) _ 0 (ParseState "ex:foo" 0 1 1)))
+      ->
+      (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Parse prefix:local, look up prefix, concatenate with local, create IRI term"
+      :complexity tier-3
+      :context (arena ctx parse-while is-pn-chars-base state-peek expect-char prefix-map-lookup make-iri make-parse-error string-concat)
+      :required (prefix-map-lookup make-iri)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Blank node parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a blank node: _:label or []")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "_:b0" 0 1 1)))
+      ->
+      (ok (record (term (term-blank (BlankNode 0))) (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "[]" 0 1 1)))
+      ->
+      (ok (record (term (term-blank (BlankNode 0))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Parse _:label or [] syntax, generate/reuse blank node ID, create term"
+      :complexity tier-3
+      :context (arena ctx state-peek state-peek-n state-advance context-gen-blank-id make-blank make-parse-error expect-char)
+      :required (make-blank)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Literal parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-string-literal ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a string literal with single, double, or triple quotes")
+    (@spec ((Arena TtlParseContext) -> (Result (record (value String) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\"hello\"" 0 1 1)))
+      ->
+      (ok (record (value "hello") (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "'''multi\nline'''" 0 1 1)))
+      ->
+      (ok (record (value "multi\nline") (ctx ...))))
+    (hole (Result (record (value String) (ctx TtlParseContext)) ParseError)
+      "Detect quote style, parse content handling escapes, consume closing quotes"
+      :complexity tier-4
+      :context (arena ctx state-peek state-peek-n state-advance state-at-end parse-escape-sequence make-parse-error)
+      :required ()))
+
+  (fn parse-escape-sequence ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse an escape sequence in a string literal")
+    (@spec ((Arena TtlParseContext) -> (Result (record (char (Int 0 .. 127)) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.state) == 92})
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\\n" 0 1 1)))
+      ->
+      (ok (record (char 10) (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\\t" 0 1 1)))
+      ->
+      (ok (record (char 9) (ctx ...))))
+    (hole (Result (record (char (Int 0 .. 127)) (ctx TtlParseContext)) ParseError)
+      "Handle \\n \\t \\r \\\\ \\\" \\' and \\uXXXX \\UXXXXXXXX escapes"
+      :complexity tier-3
+      :context (arena ctx state-advance state-peek make-parse-error)
+      :required ()))
+
+  (fn parse-literal ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a complete literal with optional datatype or language tag")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\"hello\"" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "hello" (none) (none)))) (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\"42\"^^xsd:integer" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))) (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "\"hello\"@en" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "hello" (none) (some "en")))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Parse string, check for ^^ datatype or @ language tag, create literal term"
+      :complexity tier-3
+      :context (arena ctx parse-string-literal state-peek state-peek-n state-advance parse-iri-ref parse-prefixed-name parse-while make-literal)
+      :required (parse-string-literal make-literal)))
+
+  (fn parse-numeric-literal ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a numeric literal (integer, decimal, or double)")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "42" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))) (ctx ...))))
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "3.14" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "3.14" (some "http://www.w3.org/2001/XMLSchema#decimal") (none)))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Parse digits, detect integer/decimal/double, assign appropriate XSD datatype"
+      :complexity tier-3
+      :context (arena ctx state-peek state-advance parse-while is-digit make-literal)
+      :required (make-literal)))
+
+  (fn parse-boolean-literal ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a boolean literal (true or false)")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "true" 0 1 1)))
+      ->
+      (ok (record (term (term-literal (Literal "true" (some "http://www.w3.org/2001/XMLSchema#boolean") (none)))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Match 'true' or 'false' keyword, create xsd:boolean literal"
+      :complexity tier-2
+      :context (arena ctx state-peek state-advance make-literal make-parse-error)
+      :required (make-literal)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Term parsing (unified)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-term ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse any RDF term: IRI, prefixed name, blank node, or literal")
+    (@spec ((Arena TtlParseContext) -> (Result (record (term Term) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext _ _ 0 (ParseState "<http://example.org/>" 0 1 1)))
+      ->
+      (ok (record (term (term-iri (IRI "http://example.org/"))) (ctx ...))))
+    (hole (Result (record (term Term) (ctx TtlParseContext)) ParseError)
+      "Dispatch based on first char: '<' IRI, '_' blank, '\"' or '\\'' literal, digit numeric, else prefixed"
+      :complexity tier-2
+      :context (arena ctx state-peek parse-iri-ref parse-prefixed-name parse-blank-node parse-literal parse-numeric-literal parse-boolean-literal make-parse-error)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Directive parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-directive ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a Turtle directive (@prefix or @base)")
+    (@spec ((Arena TtlParseContext) -> (Result TtlParseContext ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.state) == 64})
+    (@example
+      ((TtlParseContext (PrefixMap (list PrefixBinding) 0) (none) 0 (ParseState "@prefix ex: <http://example.org/> ." 0 1 1)))
+      ->
+      (ok (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) (none) 0 ...)))
+    (hole (Result TtlParseContext ParseError)
+      "Parse @prefix or @base directive, update context prefixes or base-iri"
+      :complexity tier-3
+      :context (arena ctx state-advance state-peek parse-while skip-whitespace expect-char prefix-map-add parse-iri-ref make-parse-error starts-with)
+      :required (prefix-map-add)))
+
+  (fn parse-sparql-prefix ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse SPARQL-style PREFIX directive (without @)")
+    (@spec ((Arena TtlParseContext) -> (Result TtlParseContext ParseError)))
+    (@alloc arena)
+    (hole (Result TtlParseContext ParseError)
+      "Parse PREFIX prefix: <iri> and add to context, no trailing dot"
+      :complexity tier-3
+      :context (arena ctx state-advance parse-while skip-whitespace expect-char prefix-map-add parse-iri-ref make-parse-error)
+      :required (prefix-map-add)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Triple parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-triple ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a complete triple statement ending with '.'")
+    (@spec ((Arena TtlParseContext) -> (Result (record (triple Triple) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (@example
+      ((TtlParseContext prefixes _ 0 (ParseState "<http://s> <http://p> <http://o> ." 0 1 1)))
+      ->
+      (ok (record
+        (triple (Triple (term-iri (IRI "http://s")) (term-iri (IRI "http://p")) (term-iri (IRI "http://o"))))
+        (ctx ...))))
+    (hole (Result (record (triple Triple) (ctx TtlParseContext)) ParseError)
+      "Parse subject, predicate, object terms with whitespace, consume '.'"
+      :complexity tier-3
+      :context (arena ctx parse-term skip-whitespace expect-char make-triple make-parse-error)
+      :required (parse-term make-triple)))
+
+  (fn parse-predicate-object-list ((in arena Arena) (mut ctx TtlParseContext) (in subject Term))
+    (@intent "Parse predicate-object list with ; separators for same subject")
+    (@spec ((Arena TtlParseContext Term) -> (Result (record (triples (List Triple)) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (hole (Result (record (triples (List Triple)) (ctx TtlParseContext)) ParseError)
+      "Parse p o pairs separated by ';', return list of triples sharing subject"
+      :complexity tier-3
+      :context (arena ctx subject parse-term skip-whitespace state-peek make-triple list-push)
+      :required ()))
+
+  (fn parse-object-list ((in arena Arena) (mut ctx TtlParseContext) (in subject Term) (in predicate Term))
+    (@intent "Parse object list with , separators for same subject and predicate")
+    (@spec ((Arena TtlParseContext Term Term) -> (Result (record (triples (List Triple)) (ctx TtlParseContext)) ParseError)))
+    (@alloc arena)
+    (hole (Result (record (triples (List Triple)) (ctx TtlParseContext)) ParseError)
+      "Parse objects separated by ',', return list of triples sharing subject and predicate"
+      :complexity tier-3
+      :context (arena ctx subject predicate parse-term skip-whitespace state-peek make-triple list-push)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Main parsing functions
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-ttl-string ((in arena Arena) (in input String))
+    (@intent "Parse a Turtle string into an RDF graph")
+    (@spec ((Arena String) -> (Result Graph ParseError)))
+    (@alloc arena)
+    (@pre {(string-len input) > 0})
+    (@example
+      ("@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .")
+      ->
+      (ok (Graph (list Triple (Triple (term-iri (IRI "http://example.org/s")) (term-iri (IRI "http://example.org/p")) (term-iri (IRI "http://example.org/o")))) 1)))
+    (hole (Result Graph ParseError)
+      "Initialize context, loop parsing directives and triples until EOF, return graph"
+      :complexity tier-4
+      :context (arena input make-ttl-context make-graph graph-add parse-directive parse-triple skip-whitespace state-at-end state-peek)
+      :required (make-ttl-context make-graph parse-directive parse-triple)))
+
+  (fn parse-ttl-file ((in arena Arena) (in path String))
+    (@intent "Parse a Turtle file into an RDF graph")
+    (@spec ((Arena String) -> (Result Graph (union (parse-error ParseError) (file-error FileError)))))
+    (@alloc arena)
+    (@pre {(string-len path) > 0})
+    (@example
+      ("test.ttl")
+      ->
+      (ok (Graph ...)))
+    (hole (Result Graph (union (parse-error ParseError) (file-error FileError)))
+      "Open file, read contents, close file, call parse-ttl-string"
+      :complexity tier-2
+      :context (arena path file-open file-read-all file-close parse-ttl-string)
+      :required (file-open file-read-all parse-ttl-string)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Character classification helpers for Turtle grammar
+  ;; ---------------------------------------------------------------------------
+
+  (fn is-pn-chars-base ((in c (Int 0 .. 127)))
+    (@intent "Check if character is valid as first char of prefix/local name")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (97) -> true)
+    (@example (65) -> true)
+    (@example (48) -> false)
+    (hole Bool "Return true if c is a-z, A-Z, or extended Unicode letter range"
+      :complexity tier-1
+      :context (c is-alpha)
+      :required (is-alpha)))
+
+  (fn is-pn-chars ((in c (Int 0 .. 127)))
+    (@intent "Check if character is valid in prefix/local name body")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (97) -> true)
+    (@example (48) -> true)
+    (@example (45) -> true)
+    (@example (32) -> false)
+    (hole Bool "Return true if c is letter, digit, underscore, or hyphen"
+      :complexity tier-1
+      :context (c is-pn-chars-base is-digit)
+      :required ())))
+

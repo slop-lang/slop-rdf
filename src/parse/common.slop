@@ -1,0 +1,185 @@
+;; common.slop - Shared parsing utilities and error types for RDF formats
+(module common
+  (export
+    ParseErrorKind
+    ParseError
+    ParseState
+    Position
+    make-parse-error
+    make-parse-state
+    state-advance
+    state-peek
+    state-peek-n
+    state-at-end
+    skip-whitespace
+    skip-line
+    expect-char
+    parse-until
+    parse-while)
+
+  ;; ---------------------------------------------------------------------------
+  ;; Types
+  ;; ---------------------------------------------------------------------------
+
+  (type Position (record
+    (line (Int 1 ..))
+    (column (Int 1 ..))
+    (offset (Int 0 ..))))
+
+  (type ParseErrorKind (enum
+    unexpected-char
+    unexpected-eof
+    invalid-iri
+    invalid-prefix
+    invalid-literal
+    invalid-escape
+    invalid-blank-node
+    unterminated-string
+    unterminated-iri
+    missing-dot
+    missing-semicolon
+    duplicate-prefix
+    unknown-prefix
+    syntax-error))
+
+  (type ParseError (record
+    (kind ParseErrorKind)
+    (message String)
+    (position Position)))
+
+  (type ParseState (record
+    (input String)
+    (offset (Int 0 ..))
+    (line (Int 1 ..))
+    (column (Int 1 ..))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Error construction
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-parse-error ((in arena Arena) (in kind ParseErrorKind) (in msg String) (in pos Position))
+    (@intent "Create a parse error with kind, message, and position")
+    (@spec ((Arena ParseErrorKind String Position) -> ParseError))
+    (@alloc arena)
+    (@pure)
+    (@example
+      ('unexpected-char "Expected '>' but got 'x'" (Position 1 10 9))
+      ->
+      (ParseError 'unexpected-char "Expected '>' but got 'x'" (Position 1 10 9)))
+    (record-new ParseError (kind kind) (message msg) (position pos)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Parse state management
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-parse-state ((in arena Arena) (in input String))
+    (@intent "Create initial parse state from input string")
+    (@spec ((Arena String) -> ParseState))
+    (@alloc arena)
+    (@post {$result.offset == 0})
+    (@post {$result.line == 1})
+    (@post {$result.column == 1})
+    (@example ("@prefix ex: <http://example.org/> .") -> (ParseState "@prefix ex: <http://example.org/> ." 0 1 1))
+    (record-new ParseState (input input) (offset 0) (line 1) (column 1)))
+
+  (fn state-at-end ((in state ParseState))
+    (@intent "Check if parser has reached end of input")
+    (@spec ((ParseState) -> Bool))
+    (@pure)
+    (@post {$result == (state.offset >= (string-len state.input))})
+    (@example ((ParseState "abc" 3 1 4)) -> true)
+    (@example ((ParseState "abc" 2 1 3)) -> false)
+    (>= (. state offset) (string-len (. state input))))
+
+  (fn state-peek ((in state ParseState))
+    (@intent "Peek at current character without consuming, returns 0 at end")
+    (@spec ((ParseState) -> (Int 0 .. 127)))
+    (@pure)
+    (@example ((ParseState "abc" 0 1 1)) -> 97)
+    (@example ((ParseState "abc" 3 1 4)) -> 0)
+    (hole (Int 0 .. 127) "Return char at current offset or 0 if at end"
+      :complexity tier-1
+      :context (state char-at state-at-end)
+      :required ()))
+
+  (fn state-peek-n ((in state ParseState) (in n (Int 0 ..)))
+    (@intent "Peek at character n positions ahead, returns 0 if out of bounds")
+    (@spec ((ParseState (Int 0 ..)) -> (Int 0 .. 127)))
+    (@pure)
+    (@example ((ParseState "abc" 0 1 1) 2) -> 99)
+    (@example ((ParseState "abc" 1 1 2) 5) -> 0)
+    (hole (Int 0 .. 127) "Return char at offset+n or 0 if out of bounds"
+      :complexity tier-1
+      :context (state n char-at string-len)
+      :required ()))
+
+  (fn state-advance ((in arena Arena) (mut state ParseState))
+    (@intent "Advance state by one character, updating line/column")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (@pre (not (state-at-end state)))
+    (@post {$result.offset == state.offset + 1})
+    (hole ParseState "Advance offset by 1, increment line on newline else increment column"
+      :complexity tier-2
+      :context (arena state state-peek record-new ParseState)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Whitespace and comment handling
+  ;; ---------------------------------------------------------------------------
+
+  (fn skip-whitespace ((in arena Arena) (mut state ParseState))
+    (@intent "Skip whitespace characters and comments, return updated state")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (@post (or (state-at-end $result) (not (is-space (state-peek $result)))))
+    (hole ParseState "Skip spaces/tabs/newlines and # comments until non-whitespace or EOF"
+      :complexity tier-3
+      :context (arena state state-at-end state-peek state-advance is-space skip-line)
+      :required (state-at-end state-peek)))
+
+  (fn skip-line ((in arena Arena) (mut state ParseState))
+    (@intent "Skip to end of current line (for comment handling)")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (hole ParseState "Advance until newline or EOF"
+      :complexity tier-2
+      :context (arena state state-at-end state-peek state-advance)
+      :required ()))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Character expectations
+  ;; ---------------------------------------------------------------------------
+
+  (fn expect-char ((in arena Arena) (mut state ParseState) (in expected (Int 0 .. 127)))
+    (@intent "Consume expected character or return error")
+    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseState ParseError)))
+    (@alloc arena)
+    (@example ((ParseState "abc" 0 1 1) 97) -> (ok (ParseState "abc" 1 1 2)))
+    (hole (Result ParseState ParseError) "Check current char matches expected, advance if yes, error if no"
+      :complexity tier-2
+      :context (arena state expected state-at-end state-peek state-advance make-parse-error Position)
+      :required (state-peek)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Character sequence parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-while ((in arena Arena) (mut state ParseState) (in predicate (Fn ((Int 0 .. 127)) -> Bool)))
+    (@intent "Parse characters while predicate returns true, return collected string")
+    (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> (record (result String) (state ParseState))))
+    (@alloc arena)
+    (hole (record (result String) (state ParseState)) "Collect chars while predicate true, return string and new state"
+      :complexity tier-3
+      :context (arena state predicate state-at-end state-peek state-advance substring)
+      :required ()))
+
+  (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
+    (@intent "Parse characters until terminator is found")
+    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result (record (result String) (state ParseState)) ParseError)))
+    (@alloc arena)
+    (hole (Result (record (result String) (state ParseState)) ParseError) "Collect chars until terminator, error on EOF"
+      :complexity tier-3
+      :context (arena state terminator state-at-end state-peek state-advance substring make-parse-error Position)
+      :required ())))
+
