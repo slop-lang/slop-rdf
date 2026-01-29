@@ -107,6 +107,9 @@
     (@spec ((IndexedGraph Triple) -> Bool))
     (@pure)
     (@pre (>= (. g size) 0))
+    ;; Semantic axioms: contains iff triple exists in g.triples
+    (@assume (implies (exists (t2 (. g triples)) (triple-eq t t2)) $result))
+    (@assume (implies $result (exists (t2 (. g triples)) (triple-eq t t2))))
     (let ((s (triple-subject t))
           (p (triple-predicate t))
           (o (triple-object t))
@@ -125,6 +128,23 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (@post (>= (list-len $result) 0))
+    ;; Results are subset of all triples in graph
+    (@assume (forall (t $result)
+               (exists (t2 (. g triples))
+                 (triple-eq t t2))))
+    ;; Results are contained in graph (bridges match → contains)
+    (@assume (forall (t $result) (indexed-graph-contains g t)))
+    ;; Filtering: when a pattern parameter is (some x), all results match on that field
+    (@assume (implies (!= subj (none))
+               (forall (t $result) (term-eq (triple-subject t) (unwrap subj)))))
+    (@assume (implies (!= pred (none))
+               (forall (t $result) (term-eq (triple-predicate t) (unwrap pred)))))
+    (@assume (implies (!= obj (none))
+               (forall (t $result) (term-eq (triple-object t) (unwrap obj)))))
+    ;; Membership postcondition for all-none case: all g.triples are in result
+    (@assume (implies (and (== subj (none)) (== pred (none)) (== obj (none)))
+               (forall (t (. g triples))
+                 (exists (t2 $result) (triple-eq t t2)))))
     (let ((mut result (list-new arena Triple)))
       (match subj
         ((some s)
