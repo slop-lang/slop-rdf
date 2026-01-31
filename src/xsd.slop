@@ -63,39 +63,39 @@
     (@intent "Parse lexical form to typed value according to XSD datatype")
     (@spec ((Arena String XsdType) -> (Result XsdValue XsdError)))
     (@alloc arena)
-    (@example ("hello" 'xsd-string) -> (ok (xsd-string-val "hello")))
-    (@example ("42" 'xsd-integer) -> (ok (xsd-integer-val 42)))
-    (@example ("true" 'xsd-boolean) -> (ok (xsd-boolean-val true)))
-    (@example ("false" 'xsd-boolean) -> (ok (xsd-boolean-val false)))
-    (@example ("3.14" 'xsd-decimal) -> (ok (xsd-decimal-val 3.14)))
+    (@example ("hello" 'xsd-string) -> (ok (union-new XsdValue xsd-string-val "hello")))
+    (@example ("42" 'xsd-integer) -> (ok (union-new XsdValue xsd-integer-val 42)))
+    (@example ("true" 'xsd-boolean) -> (ok (union-new XsdValue xsd-boolean-val true)))
+    (@example ("false" 'xsd-boolean) -> (ok (union-new XsdValue xsd-boolean-val false)))
+    (@example ("3.14" 'xsd-decimal) -> (ok (union-new XsdValue xsd-decimal-val 3.14)))
     (@example ("not-a-number" 'xsd-integer) -> (error 'invalid-lexical-form))
     (match dtype
       (xsd-string
-        (ok (xsd-string-val lexical)))
+        (ok (union-new XsdValue xsd-string-val lexical)))
       (xsd-integer
         (match (parse-int lexical)
-          ((ok val) (ok (xsd-integer-val val)))
+          ((ok val) (ok (union-new XsdValue xsd-integer-val val)))
           ((error _) (error 'invalid-lexical-form))))
       (xsd-boolean
         (if (string-eq lexical "true")
-          (ok (xsd-boolean-val true))
+          (ok (union-new XsdValue xsd-boolean-val true))
           (if (string-eq lexical "false")
-            (ok (xsd-boolean-val false))
+            (ok (union-new XsdValue xsd-boolean-val false))
             (error 'invalid-lexical-form))))
       (xsd-decimal
         (match (parse-float lexical)
-          ((ok val) (ok (xsd-decimal-val val)))
+          ((ok val) (ok (union-new XsdValue xsd-decimal-val val)))
           ((error _) (error 'invalid-lexical-form))))
       (xsd-float
         (match (parse-float lexical)
-          ((ok val) (ok (xsd-float-val (cast F32 val))))
+          ((ok val) (ok (union-new XsdValue xsd-float-val (cast F32 val))))
           ((error _) (error 'invalid-lexical-form))))
       (xsd-double
         (match (parse-float lexical)
-          ((ok val) (ok (xsd-double-val val)))
+          ((ok val) (ok (union-new XsdValue xsd-double-val val)))
           ((error _) (error 'invalid-lexical-form))))
       (xsd-unknown
-        (ok (xsd-unknown-val lexical))))
+        (ok (union-new XsdValue xsd-unknown-val lexical))))
     :c-name "xsd_parse_value")
 
   (fn xsd-values-equal ((in a XsdValue) (in b XsdValue))

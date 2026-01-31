@@ -5,7 +5,8 @@ entry = "src/rdf.slop"
 
 [build]
 output = "build/slop_rdf.a"
-sources = ["src"]
+sources = ["src", "src/parse"]
+include = ["src"]
 type = "static"
 debug = false
 
@@ -14,7 +15,7 @@ sources = ["src"]
 pattern = "*.slop"
 
 [verify]
-sources = ["src"]
+sources = ["src", "src/parse"]
 pattern = "*.slop"
 timeout = 5000
 

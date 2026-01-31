@@ -15,7 +15,10 @@
     skip-line
     expect-char
     parse-until
-    parse-while)
+    parse-while
+    ParseWhileResult)
+
+  (import strlib (char-at is-space substring string-len))
 
   ;; ---------------------------------------------------------------------------
   ;; Types
@@ -53,6 +56,10 @@
     (line (Int 1 ..))
     (column (Int 1 ..))))
 
+  (type ParseWhileResult (record
+    (result String)
+    (state ParseState)))
+
   ;; ---------------------------------------------------------------------------
   ;; Error construction
   ;; ---------------------------------------------------------------------------
@@ -86,7 +93,7 @@
     (@intent "Check if parser has reached end of input")
     (@spec ((ParseState) -> Bool))
     (@pure)
-    (@post {$result == (state.offset >= (string-len state.input))})
+    (@post {$result == ((. state offset) >= (string-len (. state input)))})
     (@example ((ParseState "abc" 3 1 4)) -> true)
     (@example ((ParseState "abc" 2 1 3)) -> false)
     (>= (. state offset) (string-len (. state input))))
@@ -97,10 +104,7 @@
     (@pure)
     (@example ((ParseState "abc" 0 1 1)) -> 97)
     (@example ((ParseState "abc" 3 1 4)) -> 0)
-    (hole (Int 0 .. 127) "Return char at current offset or 0 if at end"
-      :complexity tier-1
-      :context (state char-at state-at-end)
-      :required ()))
+    (if (state-at-end state) 0 (char-at (. state input) (. state offset))))
 
   (fn state-peek-n ((in state ParseState) (in n (Int 0 ..)))
     (@intent "Peek at character n positions ahead, returns 0 if out of bounds")
@@ -108,10 +112,9 @@
     (@pure)
     (@example ((ParseState "abc" 0 1 1) 2) -> 99)
     (@example ((ParseState "abc" 1 1 2) 5) -> 0)
-    (hole (Int 0 .. 127) "Return char at offset+n or 0 if out of bounds"
-      :complexity tier-1
-      :context (state n char-at string-len)
-      :required ()))
+    (if (>= (+ (. state offset) n) (string-len (. state input)))
+      0
+      (char-at (. state input) (+ (. state offset) n))))
 
   (fn state-advance ((in arena Arena) (mut state ParseState))
     (@intent "Advance state by one character, updating line/column")
@@ -119,10 +122,18 @@
     (@alloc arena)
     (@pre (not (state-at-end state)))
     (@post {$result.offset == state.offset + 1})
-    (hole ParseState "Advance offset by 1, increment line on newline else increment column"
-      :complexity tier-2
-      :context (arena state state-peek record-new ParseState)
-      :required ()))
+    (let ((c (state-peek state)))
+      (if (== c 10)
+        (record-new ParseState
+          (input (. state input))
+          (offset (+ (. state offset) 1))
+          (line (+ (. state line) 1))
+          (column 1))
+        (record-new ParseState
+          (input (. state input))
+          (offset (+ (. state offset) 1))
+          (line (. state line))
+          (column (+ (. state column) 1))))))
 
   ;; ---------------------------------------------------------------------------
   ;; Whitespace and comment handling
@@ -133,19 +144,24 @@
     (@spec ((Arena ParseState) -> ParseState))
     (@alloc arena)
     (@post (or (state-at-end $result) (not (is-space (state-peek $result)))))
-    (hole ParseState "Skip spaces/tabs/newlines and # comments until non-whitespace or EOF"
-      :complexity tier-3
-      :context (arena state state-at-end state-peek state-advance is-space skip-line)
-      :required (state-at-end state-peek)))
+    (let ((mut s state))
+      (while (and (not (state-at-end s))
+                  (or (is-space (state-peek s)) (== (state-peek s) 35)))
+        (if (== (state-peek s) 35)
+          (set! s (skip-line arena s))
+          (set! s (state-advance arena s))))
+      s))
 
   (fn skip-line ((in arena Arena) (mut state ParseState))
     (@intent "Skip to end of current line (for comment handling)")
     (@spec ((Arena ParseState) -> ParseState))
     (@alloc arena)
-    (hole ParseState "Advance until newline or EOF"
-      :complexity tier-2
-      :context (arena state state-at-end state-peek state-advance)
-      :required ()))
+    (let ((mut s state))
+      (while (and (not (state-at-end s)) (!= (state-peek s) 10))
+        (set! s (state-advance arena s)))
+      (if (not (state-at-end s))
+        (state-advance arena s)
+        s)))
 
   ;; ---------------------------------------------------------------------------
   ;; Character expectations
@@ -156,10 +172,13 @@
     (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseState ParseError)))
     (@alloc arena)
     (@example ((ParseState "abc" 0 1 1) 97) -> (ok (ParseState "abc" 1 1 2)))
-    (hole (Result ParseState ParseError) "Check current char matches expected, advance if yes, error if no"
-      :complexity tier-2
-      :context (arena state expected state-at-end state-peek state-advance make-parse-error Position)
-      :required (state-peek)))
+    (if (state-at-end state)
+      (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
+        (record-new Position (line (. state line)) (column (. state column)) (offset (. state offset)))))
+      (if (== (state-peek state) expected)
+        (ok (state-advance arena state))
+        (error (make-parse-error arena 'unexpected-char "Unexpected character"
+          (record-new Position (line (. state line)) (column (. state column)) (offset (. state offset))))))))
 
   ;; ---------------------------------------------------------------------------
   ;; Character sequence parsing
@@ -167,19 +186,28 @@
 
   (fn parse-while ((in arena Arena) (mut state ParseState) (in predicate (Fn ((Int 0 .. 127)) -> Bool)))
     (@intent "Parse characters while predicate returns true, return collected string")
-    (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> (record (result String) (state ParseState))))
+    (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> ParseWhileResult))
     (@alloc arena)
-    (hole (record (result String) (state ParseState)) "Collect chars while predicate true, return string and new state"
-      :complexity tier-3
-      :context (arena state predicate state-at-end state-peek state-advance substring)
-      :required ()))
+    (let ((start (. state offset))
+          (mut s state))
+      (while (and (not (state-at-end s)) (predicate (state-peek s)))
+        (set! s (state-advance arena s)))
+      (record-new ParseWhileResult
+        (result (substring arena (. state input) start (. s offset)))
+        (state s))))
 
   (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
     (@intent "Parse characters until terminator is found")
-    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result (record (result String) (state ParseState)) ParseError)))
+    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseWhileResult ParseError)))
     (@alloc arena)
-    (hole (Result (record (result String) (state ParseState)) ParseError) "Collect chars until terminator, error on EOF"
-      :complexity tier-3
-      :context (arena state terminator state-at-end state-peek state-advance substring make-parse-error Position)
-      :required ())))
+    (let ((start (. state offset))
+          (mut s state))
+      (while (and (not (state-at-end s)) (!= (state-peek s) terminator))
+        (set! s (state-advance arena s)))
+      (if (state-at-end s)
+        (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
+          (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset)))))
+        (ok (record-new ParseWhileResult
+          (result (substring arena (. state input) start (. s offset)))
+          (state (state-advance arena s))))))))
 
