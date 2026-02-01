@@ -24,7 +24,7 @@
   (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add))
   (import common (ParseState ParseError ParseErrorKind Position ParseWhileResult make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
   (import file (file-open file-read-all file-close FileMode FileError))
-  (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum string-new string-push string-concat string-eq))
+  (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum))
 
   ;; ---------------------------------------------------------------------------
   ;; Types
@@ -270,7 +270,7 @@
       (ok (record (value "multi\nline") (ctx ...))))
     (let ((q (state-peek (. ctx state)))
           (mut s (state-advance arena (. ctx state)))
-          (mut result (string-new arena "")))
+          (mut result ""))
       (if (and (== (state-peek s) q) (== (state-peek-n s 1) q))
         ;; triple-quoted string
         (do
@@ -288,7 +288,7 @@
                               (blank-counter (. ctx blank-counter))
                               (state s)))))
                       (match esc
-                        ((ok er) (do (string-push result (. er char))
+                        ((ok er) (do (set! result (string-push-char arena result (. er char)))
                                      (set! s (. (. er ctx) state))))
                         ((error e) (do (return (error e)) ())))))
                   ((and (== c q) (and (== (state-peek-n s 1) q) (== (state-peek-n s 2) q)))
@@ -297,7 +297,7 @@
                       (set! s (state-advance arena s))
                       (set! s (state-advance arena s))
                       (set! done true)))
-                  (else (do (string-push result c)
+                  (else (do (set! result (string-push-char arena result c))
                             (set! s (state-advance arena s)))))))
             (if done
               (ok (record-new StringResult (value result)
@@ -322,13 +322,13 @@
                               (blank-counter (. ctx blank-counter))
                               (state s)))))
                       (match esc
-                        ((ok er) (do (string-push result (. er char))
+                        ((ok er) (do (set! result (string-push-char arena result (. er char)))
                                      (set! s (. (. er ctx) state))))
                         ((error e) (do (return (error e)) ())))))
                   ((== c q)
                     (do (set! s (state-advance arena s))
                         (set! done true)))
-                  (else (do (string-push result c)
+                  (else (do (set! result (string-push-char arena result c))
                             (set! s (state-advance arena s)))))))
             (if done
               (ok (record-new StringResult (value result)
@@ -826,17 +826,17 @@
     (let ((f (file-open path 'read)))
       (match f
         ((ok handle)
-          (let ((content (file-read-all arena handle)))
+          (let ((content (file-read-all arena (addr handle))))
             (match content
               ((ok text)
                 (do
-                  (file-close handle)
+                  (file-close (addr handle))
                   (match (parse-ttl-string arena text)
                     ((ok g) (ok g))
                     ((error e) (error (union-new TtlFileError parse-error e))))))
               ((error e)
                 (do
-                  (file-close handle)
+                  (file-close (addr handle))
                   (error (union-new TtlFileError file-error e)))))))
         ((error e) (error (union-new TtlFileError file-error e))))))
 

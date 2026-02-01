@@ -18,7 +18,7 @@
     parse-while
     ParseWhileResult)
 
-  (import strlib (char-at is-space substring string-len))
+  (import strlib (char-at is-space substring))
 
   ;; ---------------------------------------------------------------------------
   ;; Types

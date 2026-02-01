@@ -186,7 +186,7 @@
     (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
       (let ((name-result (parse-while arena s1 is-pn-chars)))
         (ok (record-new N3TermResult
-          (term (n3-quick-var (record-new QuickVar (name (. name-result result)))))
+          (term (union-new N3Term n3-quick-var (record-new QuickVar (name (. name-result result)))))
           (ctx (record-new N3ParseContext
             (ttl-ctx (record-new TtlParseContext
               (prefixes (. (. ctx ttl-ctx) prefixes))
@@ -321,7 +321,7 @@
             (match f-result
               ((ok fr)
                 (ok (record-new N3TermResult
-                  (term (n3-formula (. fr formula)))
+                  (term (union-new N3Term n3-formula (. fr formula)))
                   (ctx (. fr ctx)))))
               ((error e) (error e)))))
         ((is-quick-var-start c)
@@ -481,9 +481,9 @@
                                         ((ok s9)
                                           (ok (record-new N3TripleResult
                                             (triple (record-new N3Triple
-                                              (subject (n3-formula (. ar formula)))
-                                              (predicate (n3-rdf (make-iri arena "http://www.w3.org/2000/10/swap/log#implies")))
-                                              (object (n3-formula (. cr formula)))))
+                                              (subject (union-new N3Term n3-formula (. ar formula)))
+                                              (predicate (union-new N3Term n3-rdf (make-iri arena "http://www.w3.org/2000/10/swap/log#implies")))
+                                              (object (union-new N3Term n3-formula (. cr formula)))))
                                             (ctx (record-new N3ParseContext
                                               (ttl-ctx (record-new TtlParseContext
                                                 (prefixes (. (. (. cr ctx) ttl-ctx) prefixes))
@@ -509,7 +509,7 @@
     (@alloc arena)
     (@example ("implies") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#implies")))
     (@example ("notIncludes") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#notIncludes")))
-    (make-iri arena (string-concat "http://www.w3.org/2000/10/swap/log#" local-name)))
+    (make-iri arena (string-concat arena "http://www.w3.org/2000/10/swap/log#" local-name)))
 
   ;; ---------------------------------------------------------------------------
   ;; Main parsing functions
@@ -617,17 +617,17 @@
     (let ((f (file-open path 'read)))
       (match f
         ((ok handle)
-          (let ((content (file-read-all arena handle)))
+          (let ((content (file-read-all arena (addr handle))))
             (match content
               ((ok text)
                 (do
-                  (file-close handle)
+                  (file-close (addr handle))
                   (match (parse-n3-string arena text)
                     ((ok g) (ok g))
                     ((error e) (error (union-new N3FileError n3-parse-error e))))))
               ((error e)
                 (do
-                  (file-close handle)
+                  (file-close (addr handle))
                   (error (union-new N3FileError n3-file-error e)))))))
         ((error e) (error (union-new N3FileError n3-file-error e))))))
 
