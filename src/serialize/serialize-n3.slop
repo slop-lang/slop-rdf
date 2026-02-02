@@ -1,0 +1,131 @@
+;; n3.slop - Notation3 (N3) serializer for RDF
+;; Generates N3 syntax from N3Graph data structures
+;; Extends TTL serializer with formula and quick variable support
+(module serialize-n3
+  (export
+    serialize-n3-string
+    serialize-n3-file
+    serialize-n3-term
+    serialize-formula
+    serialize-quick-var)
+
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add graph-size))
+  (import ttl (PrefixMap PrefixBinding))
+  (import n3 (N3Graph N3Term N3Triple Formula FormulaId QuickVar))
+  (import serialize-ttl (SerializeConfig SerializeError TtlFileError serialize-term serialize-prefixes serialize-base))
+  (import file (file-open file-close file-write-line FileMode FileError))
+  (import strlib (starts-with))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Types
+  ;; ---------------------------------------------------------------------------
+
+  (type N3FileError (union
+    (n3-serialize-error SerializeError)
+    (n3-file-error FileError)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Quick variable serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-quick-var ((in arena Arena) (in var QuickVar))
+    (@intent "Serialize a quick variable as ?name")
+    (@spec ((Arena QuickVar) -> String))
+    (@alloc arena)
+    (@pre (> (string-len var.name) 0))
+    (@post (starts-with $result "?"))
+    (@example ((QuickVar "x")) -> "?x")
+    (@example ((QuickVar "person")) -> "?person")
+    (string-concat arena "?" (. var name)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Formula serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-formula ((in arena Arena) (in f Formula) (in prefixes PrefixMap))
+    (@intent "Serialize a formula as { triples }")
+    (@spec ((Arena Formula PrefixMap) -> String))
+    (@alloc arena)
+    (@post (starts-with $result "{"))
+    (@example
+      ((Formula 0 (Graph (list Triple) 0)) (PrefixMap (list PrefixBinding) 0))
+      ->
+      "{ }")
+    (let ((g (. f graph)))
+      (if (== (graph-size g) 0)
+        "{ }"
+        (let ((mut result "{\n"))
+          (for-each (triple (. g triples))
+            (set! result (string-concat arena result "  "))
+            (set! result (string-concat arena result
+              (serialize-term arena (. triple subject) prefixes)))
+            (set! result (string-concat arena result " "))
+            (set! result (string-concat arena result
+              (serialize-term arena (. triple predicate) prefixes)))
+            (set! result (string-concat arena result " "))
+            (set! result (string-concat arena result
+              (serialize-term arena (. triple object) prefixes)))
+            (set! result (string-concat arena result " .\n")))
+          (set! result (string-concat arena result "}"))
+          result))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 term serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-n3-term ((in arena Arena) (in t N3Term) (in prefixes PrefixMap))
+    (@intent "Serialize any N3 term: RDF term, formula, or quick variable")
+    (@spec ((Arena N3Term PrefixMap) -> String))
+    (@alloc arena)
+    (@post (> (string-len $result) 0))
+    (match t
+      ((n3-rdf term) (serialize-term arena term prefixes))
+      ((n3-formula f) (serialize-formula arena f prefixes))
+      ((n3-quick-var qv) (serialize-quick-var arena qv))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Main N3 serializer
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-n3-string ((in arena Arena) (in g N3Graph) (in config SerializeConfig))
+    (@intent "Serialize an N3 graph to an N3 string")
+    (@spec ((Arena N3Graph SerializeConfig) -> String))
+    (@alloc arena)
+    (@post (>= (string-len $result) 0))
+    (let ((prefixes (. config prefixes))
+          (base (. config base-iri)))
+      (let ((mut result ""))
+        ;; Emit base
+        (set! result (string-concat arena result (serialize-base arena base)))
+        ;; Emit prefixes
+        (let ((prefix-str (serialize-prefixes arena prefixes)))
+          (when (> (string-len prefix-str) 0)
+            (set! result (string-concat arena result prefix-str))
+            (set! result (string-concat arena result "\n"))))
+        ;; Emit N3 triples
+        (for-each (triple (. g triples))
+          (set! result (string-concat arena result
+            (serialize-n3-term arena (. triple subject) prefixes)))
+          (set! result (string-concat arena result " "))
+          (set! result (string-concat arena result
+            (serialize-n3-term arena (. triple predicate) prefixes)))
+          (set! result (string-concat arena result " "))
+          (set! result (string-concat arena result
+            (serialize-n3-term arena (. triple object) prefixes)))
+          (set! result (string-concat arena result " .\n")))
+        result)))
+
+  (fn serialize-n3-file ((in arena Arena) (in g N3Graph) (in config SerializeConfig) (in path String))
+    (@intent "Serialize an N3 graph and write to an N3 file")
+    (@spec ((Arena N3Graph SerializeConfig String) -> (Result Bool N3FileError)))
+    (@alloc arena)
+    (@pre (> (string-len path) 0))
+    (let ((content (serialize-n3-string arena g config)))
+      (let ((f (file-open path 'write)))
+        (match f
+          ((ok handle)
+            (do
+              (file-write-line (addr handle) content)
+              (file-close (addr handle))
+              (ok true)))
+          ((error e) (error (union-new N3FileError n3-file-error e))))))))

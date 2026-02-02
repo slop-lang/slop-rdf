@@ -3,6 +3,7 @@
 (module ttl
   (export
     PrefixMap
+    PrefixBinding
     TtlParseContext
     TtlFileError
     is-pn-chars-base

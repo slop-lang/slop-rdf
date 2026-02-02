@@ -3,9 +3,15 @@
 (module n3
   (export
     N3ParseContext
+    N3Term
+    N3Triple
     Formula
     FormulaId
+    QuickVar
     N3Graph
+    make-n3-graph
+    n3-graph-add-triple
+    n3-graph-add-formula
     parse-n3-string
     parse-n3-file
     parse-formula
