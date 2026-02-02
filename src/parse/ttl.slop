@@ -64,6 +64,11 @@
     (triples (List Triple))
     (ctx TtlParseContext)))
 
+  (type TermTriplesResult (record
+    (term Term)
+    (extra-triples (List Triple))
+    (ctx TtlParseContext)))
+
   (type TtlFileError (union
     (parse-error ParseError)
     (file-error FileError)))
@@ -184,11 +189,11 @@
       ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) _ 0 (ParseState "ex:foo" 0 1 1)))
       ->
       (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
-    (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars-base)))
+    (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars)))
       (let ((s1 (expect-char arena (. prefix-result state) 58)))
         (match s1
           ((ok s2)
-            (let ((local-result (parse-while arena s2 is-pn-chars-base)))
+            (let ((local-result (parse-while arena s2 is-pn-chars)))
               (let ((lookup (prefix-map-lookup (. ctx prefixes) (. prefix-result result))))
                 (match lookup
                   ((some base-iri)
@@ -211,31 +216,52 @@
   ;; Blank node parsing
   ;; ---------------------------------------------------------------------------
 
-  (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
-    (@intent "Parse a blank node: _:label or []")
-    (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
+  (fn parse-blank-node-extended ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse blank node with optional property list, returning extra triples")
+    (@spec ((Arena TtlParseContext) -> (Result TermTriplesResult ParseError)))
     (@alloc arena)
-    (@example
-      ((TtlParseContext _ _ 0 (ParseState "_:b0" 0 1 1)))
-      ->
-      (ok (record (term (term-blank (BlankNode 0))) (ctx ...))))
-    (@example
-      ((TtlParseContext _ _ 0 (ParseState "[]" 0 1 1)))
-      ->
-      (ok (record (term (term-blank (BlankNode 0))) (ctx ...))))
     (let ((c (state-peek (. ctx state))))
       (if (== c 91)
-        ;; [] syntax
         (let ((s1 (state-advance arena (. ctx state))))
-          (let ((s2 (state-advance arena s1)))
-            (let ((gen (context-gen-blank-id arena ctx)))
-              (ok (record-new TermResult
-                (term (make-blank arena (. gen id)))
-                (ctx (record-new TtlParseContext
-                  (prefixes (. (. gen ctx) prefixes))
-                  (base-iri (. (. gen ctx) base-iri))
-                  (blank-counter (. (. gen ctx) blank-counter))
-                  (state s2))))))))
+          (let ((s2 (skip-whitespace arena s1)))
+            (if (== (state-peek s2) 93)
+              ;; empty blank node
+              (let ((s3 (state-advance arena s2)))
+                (let ((gen (context-gen-blank-id arena ctx)))
+                  (ok (record-new TermTriplesResult
+                    (term (make-blank arena (. gen id)))
+                    (extra-triples (list-new arena Triple))
+                    (ctx (record-new TtlParseContext
+                      (prefixes (. (. gen ctx) prefixes))
+                      (base-iri (. (. gen ctx) base-iri))
+                      (blank-counter (. (. gen ctx) blank-counter))
+                      (state s3)))))))
+              ;; blank node with property list
+              (let ((gen (context-gen-blank-id arena ctx)))
+                (let ((bnode (make-blank arena (. gen id))))
+                  (let ((pol-result (parse-predicate-object-list arena
+                          (record-new TtlParseContext
+                            (prefixes (. (. gen ctx) prefixes))
+                            (base-iri (. (. gen ctx) base-iri))
+                            (blank-counter (. (. gen ctx) blank-counter))
+                            (state s2))
+                          bnode)))
+                    (match pol-result
+                      ((ok polr)
+                        (let ((s3 (skip-whitespace arena (. (. polr ctx) state))))
+                          (let ((s4 (expect-char arena s3 93)))
+                            (match s4
+                              ((ok s5)
+                                (ok (record-new TermTriplesResult
+                                  (term bnode)
+                                  (extra-triples (. polr triples))
+                                  (ctx (record-new TtlParseContext
+                                    (prefixes (. (. polr ctx) prefixes))
+                                    (base-iri (. (. polr ctx) base-iri))
+                                    (blank-counter (. (. polr ctx) blank-counter))
+                                    (state s5))))))
+                              ((error e) (error e))))))
+                      ((error e) (error e)))))))))
         ;; _:label syntax
         (let ((s1 (state-advance arena (. ctx state))))
           (let ((s2 (expect-char arena s1 58)))
@@ -243,14 +269,27 @@
               ((ok s3)
                 (let ((gen (context-gen-blank-id arena ctx)))
                   (let ((label (parse-while arena s3 is-pn-chars)))
-                    (ok (record-new TermResult
+                    (ok (record-new TermTriplesResult
                       (term (make-blank arena (. gen id)))
+                      (extra-triples (list-new arena Triple))
                       (ctx (record-new TtlParseContext
                         (prefixes (. (. gen ctx) prefixes))
                         (base-iri (. (. gen ctx) base-iri))
                         (blank-counter (. (. gen ctx) blank-counter))
                         (state (. label state)))))))))
               ((error e) (error e))))))))
+
+  (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a blank node, returning TermResult for backward compat")
+    (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
+    (@alloc arena)
+    (let ((r (parse-blank-node-extended arena ctx)))
+      (match r
+        ((ok ttr)
+          (ok (record-new TermResult
+            (term (. ttr term))
+            (ctx (. ttr ctx)))))
+        ((error e) (error e)))))
 
   ;; ---------------------------------------------------------------------------
   ;; Literal parsing
@@ -481,7 +520,7 @@
           (set! s (state-advance arena s)))
         (let ((exp-digits (parse-while arena s is-digit)))
           (set! s (. exp-digits state))))
-      (let ((val (substring arena (. (. ctx state) input) start (. s offset)))
+      (let ((val (substring arena (. (. ctx state) input) start (- (. s offset) start)))
             (dt (cond
                   (has-e "http://www.w3.org/2001/XMLSchema#double")
                   (has-dot "http://www.w3.org/2001/XMLSchema#decimal")
@@ -546,6 +585,83 @@
           (parse-boolean-literal arena ctx))
         (else (parse-prefixed-name arena ctx)))))
 
+  (fn parse-collection ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse an RDF collection into rdf:first/rdf:rest chain")
+    (@spec ((Arena TtlParseContext) -> (Result TermTriplesResult ParseError)))
+    (@alloc arena)
+    (let ((s1 (skip-whitespace arena (state-advance arena (. ctx state))))
+          (mut triples (list-new arena Triple))
+          (mut cur-ctx (record-new TtlParseContext
+            (prefixes (. ctx prefixes))
+            (base-iri (. ctx base-iri))
+            (blank-counter (. ctx blank-counter))
+            (state s1)))
+          (rdf-first (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"))
+          (rdf-rest (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#rest"))
+          (rdf-nil (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#nil"))
+          (mut prev-node (Option Term) (none))
+          (mut first-node (Option Term) (none)))
+      (while (and (not (state-at-end (. cur-ctx state)))
+                  (!= (state-peek (. cur-ctx state)) 41))
+        (let ((elem-result (parse-term-extended arena cur-ctx)))
+          (match elem-result
+            ((ok er)
+              (do
+                (for-each (t (. er extra-triples))
+                  (list-push triples t))
+                (let ((gen (context-gen-blank-id arena (. er ctx))))
+                  (let ((cell-node (make-blank arena (. gen id))))
+                    (do
+                      (list-push triples (make-triple arena cell-node rdf-first (. er term)))
+                      (match prev-node
+                        ((some pn) (list-push triples (make-triple arena pn rdf-rest cell-node)))
+                        ((none) ()))
+                      (match first-node
+                        ((some _) ())
+                        ((none) (set! first-node (some cell-node))))
+                      (set! prev-node (some cell-node))
+                      (set! cur-ctx (record-new TtlParseContext
+                        (prefixes (. (. gen ctx) prefixes))
+                        (base-iri (. (. gen ctx) base-iri))
+                        (blank-counter (. (. gen ctx) blank-counter))
+                        (state (skip-whitespace arena (. (. gen ctx) state))))))))))
+            ((error e) (do (return (error e)) ())))))
+      (match prev-node
+        ((some pn) (list-push triples (make-triple arena pn rdf-rest rdf-nil)))
+        ((none) ()))
+      (let ((s-end (expect-char arena (. cur-ctx state) 41)))
+        (match s-end
+          ((ok s-after)
+            (ok (record-new TermTriplesResult
+              (term (match first-node
+                ((some fnode) fnode)
+                ((none) rdf-nil)))
+              (extra-triples triples)
+              (ctx (record-new TtlParseContext
+                (prefixes (. cur-ctx prefixes))
+                (base-iri (. cur-ctx base-iri))
+                (blank-counter (. cur-ctx blank-counter))
+                (state s-after))))))
+          ((error e) (error e))))))
+
+  (fn parse-term-extended ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse any RDF term, returning extra triples from blank nodes and collections")
+    (@spec ((Arena TtlParseContext) -> (Result TermTriplesResult ParseError)))
+    (@alloc arena)
+    (let ((c (state-peek (. ctx state))))
+      (cond
+        ((== c 91) (parse-blank-node-extended arena ctx))
+        ((== c 40) (parse-collection arena ctx))
+        (else
+          (let ((r (parse-term arena ctx)))
+            (match r
+              ((ok tr)
+                (ok (record-new TermTriplesResult
+                  (term (. tr term))
+                  (extra-triples (list-new arena Triple))
+                  (ctx (. tr ctx)))))
+              ((error e) (error e))))))))
+
   ;; ---------------------------------------------------------------------------
   ;; Directive parsing
   ;; ---------------------------------------------------------------------------
@@ -565,7 +681,7 @@
               (s2 (skip-whitespace arena (. kw state))))
           (if (starts-with keyword "prefix")
             ;; @prefix name: <iri> .
-            (let ((prefix-name (parse-while arena s2 is-pn-chars-base)))
+            (let ((prefix-name (parse-while arena s2 is-pn-chars)))
               (let ((s3 (expect-char arena (. prefix-name state) 58)))
                 (match s3
                   ((ok s4)
@@ -623,7 +739,7 @@
     (@alloc arena)
     (let ((kw (parse-while arena (. ctx state) is-pn-chars-base)))
       (let ((s1 (skip-whitespace arena (. kw state))))
-        (let ((prefix-name (parse-while arena s1 is-pn-chars-base)))
+        (let ((prefix-name (parse-while arena s1 is-pn-chars)))
           (let ((s2 (expect-char arena (. prefix-name state) 58)))
             (match s2
               ((ok s3)
@@ -708,40 +824,46 @@
           (mut done false))
       (while (not done)
         (let ((s1 (skip-whitespace arena (. cur-ctx state))))
-          (let ((pred-result (parse-term arena
-                  (record-new TtlParseContext
-                    (prefixes (. cur-ctx prefixes))
-                    (base-iri (. cur-ctx base-iri))
-                    (blank-counter (. cur-ctx blank-counter))
-                    (state s1)))))
-            (match pred-result
-              ((ok pr)
-                (let ((s2 (skip-whitespace arena (. (. pr ctx) state))))
-                  (let ((obj-result (parse-term arena
-                          (record-new TtlParseContext
-                            (prefixes (. (. pr ctx) prefixes))
-                            (base-iri (. (. pr ctx) base-iri))
-                            (blank-counter (. (. pr ctx) blank-counter))
-                            (state s2)))))
-                    (match obj-result
-                      ((ok objr)
-                        (do
-                          (list-push triples (make-triple arena subject (. pr term) (. objr term)))
-                          (set! cur-ctx (. objr ctx))
-                          (let ((s3 (skip-whitespace arena (. (. objr ctx) state))))
-                            (if (== (state-peek s3) 59)
-                              (set! cur-ctx (record-new TtlParseContext
-                                (prefixes (. cur-ctx prefixes))
-                                (base-iri (. cur-ctx base-iri))
-                                (blank-counter (. cur-ctx blank-counter))
-                                (state (state-advance arena s3))))
-                              (set! done true)))))
-                      ((error e) (do (return (error e)) ()))))))
-              ((error e) (do (return (error e)) ()))))))
+          (let ((c1 (state-peek s1)))
+            (if (or (== c1 46) (or (== c1 93) (== c1 0)))
+              ;; trailing ; before terminator - stop
+              (do
+                (set! cur-ctx (record-new TtlParseContext
+                  (prefixes (. cur-ctx prefixes))
+                  (base-iri (. cur-ctx base-iri))
+                  (blank-counter (. cur-ctx blank-counter))
+                  (state s1)))
+                (set! done true))
+              ;; parse predicate then object-list
+              (let ((pred-result (parse-term arena
+                      (record-new TtlParseContext
+                        (prefixes (. cur-ctx prefixes))
+                        (base-iri (. cur-ctx base-iri))
+                        (blank-counter (. cur-ctx blank-counter))
+                        (state s1)))))
+                (match pred-result
+                  ((ok pr)
+                    (let ((obj-list-result (parse-object-list arena (. pr ctx) subject (. pr term))))
+                      (match obj-list-result
+                        ((ok olr)
+                          (do
+                            (for-each (t (. olr triples))
+                              (list-push triples t))
+                            (set! cur-ctx (. olr ctx))
+                            (let ((s3 (skip-whitespace arena (. (. olr ctx) state))))
+                              (if (== (state-peek s3) 59)
+                                (set! cur-ctx (record-new TtlParseContext
+                                  (prefixes (. cur-ctx prefixes))
+                                  (base-iri (. cur-ctx base-iri))
+                                  (blank-counter (. cur-ctx blank-counter))
+                                  (state (state-advance arena s3))))
+                                (set! done true)))))
+                        ((error e) (do (return (error e)) ())))))
+                  ((error e) (do (return (error e)) ()))))))))
       (ok (record-new TriplesResult (triples triples) (ctx cur-ctx)))))
 
   (fn parse-object-list ((in arena Arena) (mut ctx TtlParseContext) (in subject Term) (in predicate Term))
-    (@intent "Parse object list with , separators for same subject and predicate")
+    (@intent "Parse object list with comma separators for same subject and predicate")
     (@spec ((Arena TtlParseContext Term Term) -> (Result TriplesResult ParseError)))
     (@alloc arena)
     (let ((mut triples (list-new arena Triple))
@@ -749,7 +871,7 @@
           (mut done false))
       (while (not done)
         (let ((s1 (skip-whitespace arena (. cur-ctx state))))
-          (let ((obj-result (parse-term arena
+          (let ((obj-result (parse-term-extended arena
                   (record-new TtlParseContext
                     (prefixes (. cur-ctx prefixes))
                     (base-iri (. cur-ctx base-iri))
@@ -758,6 +880,8 @@
             (match obj-result
               ((ok objr)
                 (do
+                  (for-each (t (. objr extra-triples))
+                    (list-push triples t))
                   (list-push triples (make-triple arena subject predicate (. objr term)))
                   (set! cur-ctx (. objr ctx))
                   (let ((s2 (skip-whitespace arena (. (. objr ctx) state))))
@@ -794,18 +918,45 @@
           (state s)))
         (while (not (state-at-end (. ctx state)))
           (let ((c (state-peek (. ctx state))))
-            (if (== c 64)
-              (let ((dir-result (parse-directive arena ctx)))
-                (match dir-result
-                  ((ok new-ctx) (set! ctx new-ctx))
-                  ((error e) (do (return (error e)) ()))))
-              (let ((triple-result (parse-triple arena ctx)))
-                (match triple-result
-                  ((ok tr)
-                    (do
-                      (set! g (graph-add arena g (. tr triple)))
-                      (set! ctx (. tr ctx))))
-                  ((error e) (do (return (error e)) ()))))))
+            (cond
+              ;; @prefix or @base directive
+              ((== c 64)
+                (let ((dir-result (parse-directive arena ctx)))
+                  (match dir-result
+                    ((ok new-ctx) (set! ctx new-ctx))
+                    ((error e) (do (return (error e)) ())))))
+              ;; SPARQL-style PREFIX or BASE
+              ((or (== c 80) (== c 66))
+                (let ((dir-result (parse-sparql-prefix arena ctx)))
+                  (match dir-result
+                    ((ok new-ctx) (set! ctx new-ctx))
+                    ((error e) (do (return (error e)) ())))))
+              ;; Triple: subject predicate-object-list .
+              (else
+                (let ((sub-result (parse-term-extended arena ctx)))
+                  (match sub-result
+                    ((ok sr)
+                      (do
+                        (for-each (t (. sr extra-triples))
+                          (set! g (graph-add arena g t)))
+                        (let ((pol-result (parse-predicate-object-list arena (. sr ctx) (. sr term))))
+                          (match pol-result
+                            ((ok polr)
+                              (do
+                                (for-each (t (. polr triples))
+                                  (set! g (graph-add arena g t)))
+                                (let ((s3 (skip-whitespace arena (. (. polr ctx) state))))
+                                  (let ((s4 (expect-char arena s3 46)))
+                                    (match s4
+                                      ((ok s5)
+                                        (set! ctx (record-new TtlParseContext
+                                          (prefixes (. (. polr ctx) prefixes))
+                                          (base-iri (. (. polr ctx) base-iri))
+                                          (blank-counter (. (. polr ctx) blank-counter))
+                                          (state s5))))
+                                      ((error e) (do (return (error e)) ())))))))
+                            ((error e) (do (return (error e)) ()))))))
+                    ((error e) (do (return (error e)) ())))))))
           (let ((s2 (skip-whitespace arena (. ctx state))))
             (set! ctx (record-new TtlParseContext
               (prefixes (. ctx prefixes))

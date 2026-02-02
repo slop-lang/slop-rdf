@@ -1,0 +1,236 @@
+(module test-ttl-parser
+  (@doc "Integration tests for TTL (Turtle) parser")
+
+  (import rdf
+    (Term Graph make-iri make-blank make-literal make-triple
+     graph-size graph-contains))
+  (import ttl (parse-ttl-string parse-ttl-file TtlFileError))
+  (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all TTL parser integration tests")
+    (@spec (() -> Int))
+    (with-arena 131072
+
+    (println "=== TTL Parser Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test simple triple with full IRIs
+      (println "-- Simple Triple (Full IRIs) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> <http://example.org/o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Simple triple: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Simple triple: parse should succeed" false)))))
+
+      ;; Test prefix declaration + prefixed names
+      (println "")
+      (println "-- Prefix Declaration --")
+      (let ((result (parse-ttl-string arena "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Prefixed: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Prefixed: parse should succeed" false)))))
+
+      ;; Test plain string literal
+      (println "")
+      (println "-- String Literal (Plain) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> \"hello\" .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Plain literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Plain literal: parse should succeed" false)))))
+
+      ;; Test typed literal (^^)
+      (println "")
+      (println "-- Typed Literal (^^) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> \"42\"^^<http://www.w3.org/2001/XMLSchema#integer> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Typed literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Typed literal: parse should succeed" false)))))
+
+      ;; Test language-tagged literal (@en)
+      (println "")
+      (println "-- Language-Tagged Literal --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> \"hello\"@en .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Lang literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Lang literal: parse should succeed" false)))))
+
+      ;; Test numeric literal (integer)
+      (println "")
+      (println "-- Numeric Literal (Integer) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> 42 .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Integer literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Integer literal: parse should succeed" false)))))
+
+      ;; Test numeric literal (decimal)
+      (println "")
+      (println "-- Numeric Literal (Decimal) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> 3.14 .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Decimal literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Decimal literal: parse should succeed" false)))))
+
+      ;; Test boolean literal
+      (println "")
+      (println "-- Boolean Literal --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> true .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Boolean literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Boolean literal: parse should succeed" false)))))
+
+      ;; Test blank node (_:b0)
+      (println "")
+      (println "-- Blank Node --")
+      (let ((result (parse-ttl-string arena "_:b0 <http://example.org/p> <http://example.org/o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Blank node: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Blank node: parse should succeed" false)))))
+
+      ;; Test multiple triples
+      (println "")
+      (println "-- Multiple Triples --")
+      (let ((result (parse-ttl-string arena "<http://example.org/a> <http://example.org/p> <http://example.org/b> .\n<http://example.org/b> <http://example.org/p> <http://example.org/c> .\n<http://example.org/c> <http://example.org/p> <http://example.org/d> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Multiple triples: graph size is 3" 3 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Multiple triples: parse should succeed" false)))))
+
+      ;; Test comments
+      (println "")
+      (println "-- Comments --")
+      (let ((result (parse-ttl-string arena "# This is a comment\n<http://example.org/s> <http://example.org/p> <http://example.org/o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Comments: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Comments: parse should succeed" false)))))
+
+      ;; Test graph-contains with parsed terms (re-parse same doc, check contains with its own triple)
+      (println "")
+      (println "-- Graph Contains (Self-Check) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> <http://example.org/o> .")))
+        (match result
+          ((ok g)
+            (let ((result2 (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> <http://example.org/o> .")))
+              (match result2
+                ((ok g2)
+                  (set! s (assert-true arena s "Contains: duplicate parse yields same graph size"
+                    (== (graph-size g) (graph-size g2)))))
+                ((error e)
+                  (set! s (assert-true arena s "Contains: second parse should succeed" false))))))
+          ((error e)
+            (set! s (assert-true arena s "Contains: first parse should succeed" false)))))
+
+      ;; Test semicolon predicate-object lists
+      (println "")
+      (println "-- Semicolon Pred-Obj Lists --")
+      (let ((result (parse-ttl-string arena "<http://s> <http://p1> <http://o1> ; <http://p2> <http://o2> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Semicolon: graph size is 2" 2 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Semicolon: parse should succeed" false)))))
+
+      ;; Test trailing semicolon
+      (println "")
+      (println "-- Trailing Semicolon --")
+      (let ((result (parse-ttl-string arena "<http://s> <http://p1> <http://o1> ; <http://p2> <http://o2> ; .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Trailing semi: graph size is 2" 2 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Trailing semi: parse should succeed" false)))))
+
+      ;; Test comma object lists
+      (println "")
+      (println "-- Comma Object Lists --")
+      (let ((result (parse-ttl-string arena "<http://s> <http://p> <http://o1> , <http://o2> , <http://o3> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Comma: graph size is 3" 3 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Comma: parse should succeed" false)))))
+
+      ;; Test mixed semicolons and commas
+      (println "")
+      (println "-- Mixed Semi + Comma --")
+      (let ((result (parse-ttl-string arena "<http://s> <http://p1> <http://o1> , <http://o2> ; <http://p2> <http://o3> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Mixed: graph size is 3" 3 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Mixed: parse should succeed" false)))))
+
+      ;; Test prefix with digits (dc11)
+      (println "")
+      (println "-- Prefix With Digits --")
+      (let ((result (parse-ttl-string arena "@prefix dc11: <http://purl.org/dc/elements/1.1/> .\ndc11:title <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Prefix digits: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Prefix digits: parse should succeed" false)))))
+
+      ;; Test RDF collection
+      (println "")
+      (println "-- RDF Collection --")
+      (let ((result (parse-ttl-string arena "<http://s> <http://p> ( <http://a> <http://b> <http://c> ) .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-true arena s "Collection: parse should succeed" true))
+              (set! s (assert-true arena s "Collection: graph has triples" (> (graph-size g) 0)))))
+          ((error e)
+            (set! s (assert-true arena s "Collection: parse should succeed" false)))))
+
+      (test-summary arena s)
+
+      ;; BFO-core test in a separate larger arena
+      (println "")
+      (println "-- BFO-core.ttl File Parse --")))
+
+    ;; Need a much larger arena for the 109KB file
+    (with-arena 4194304
+      (let ((mut s2 (test-state-new arena)))
+        (let ((result (parse-ttl-file arena "examples/bfo-core.ttl")))
+          (match result
+            ((ok g)
+              (do
+                (println (string-concat arena "  BFO triples: " (int-to-string arena (graph-size g))))
+                (set! s2 (assert-true arena s2 "BFO: parse succeeded" true))
+                (set! s2 (assert-true arena s2 "BFO: graph has triples" (> (graph-size g) 0)))))
+            ((error e)
+              (match e
+                ((parse-error pe)
+                  (do
+                    (println (string-concat arena "  Parse error: " (. pe message)))
+                    (println (string-concat arena "  At line: " (int-to-string arena (. (. pe position) line))))
+                    (println (string-concat arena "  At col: " (int-to-string arena (. (. pe position) column))))
+                    (set! s2 (assert-true arena s2 "BFO: parse should succeed" false))))
+                ((file-error fe)
+                  (do
+                    (println "  File error")
+                    (set! s2 (assert-true arena s2 "BFO: file should open" false))))))))
+        (test-summary arena s2)))
+    0))

@@ -193,7 +193,7 @@
       (while (and (not (state-at-end s)) (predicate (state-peek s)))
         (set! s (state-advance arena s)))
       (record-new ParseWhileResult
-        (result (substring arena (. state input) start (. s offset)))
+        (result (substring arena (. state input) start (- (. s offset) start)))
         (state s))))
 
   (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
@@ -208,6 +208,6 @@
         (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
           (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset)))))
         (ok (record-new ParseWhileResult
-          (result (substring arena (. state input) start (. s offset)))
+          (result (substring arena (. state input) start (- (. s offset) start)))
           (state (state-advance arena s))))))))
 
