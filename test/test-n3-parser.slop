@@ -1,0 +1,61 @@
+(module test-n3-parser
+  (@doc "Integration tests for N3 (Notation3) parser")
+
+  (import rdf
+    (Term Graph make-iri make-blank make-literal make-triple
+     graph-size graph-contains))
+  (import n3 (N3Graph parse-n3-string))
+  (import ttl (parse-ttl-string))
+  (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
+
+  (fn main ()
+    (@intent "Run all N3 parser integration tests")
+    (@spec (() -> Int))
+    (with-arena 131072
+
+    (println "=== N3 Parser Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; Test basic triples (N3 superset of Turtle)
+      (println "-- Basic Triple --")
+      (let ((result (parse-n3-string arena "<http://example.org/s> <http://example.org/p> <http://example.org/o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Basic triple: N3 graph size is 1" 1 (. g size))))
+          ((error e)
+            (set! s (assert-true arena s "Basic triple: parse should succeed" false)))))
+
+      ;; Test prefix + prefixed names in N3
+      (println "")
+      (println "-- Prefixed Names --")
+      (let ((result (parse-n3-string arena "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Prefixed N3: graph size is 1" 1 (. g size))))
+          ((error e)
+            (set! s (assert-true arena s "Prefixed N3: parse should succeed" false)))))
+
+      ;; Test quick variable ?x
+      (println "")
+      (println "-- Quick Variable --")
+      (let ((result (parse-n3-string arena "@prefix ex: <http://example.org/> .\n?x ex:knows ex:bob .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Quick var: graph size is 1" 1 (. g size))))
+          ((error e)
+            (set! s (assert-true arena s "Quick var: parse should succeed" false)))))
+
+      ;; Test multiple triples in N3
+      (println "")
+      (println "-- Multiple Triples --")
+      (let ((result (parse-n3-string arena "<http://example.org/a> <http://example.org/p> <http://example.org/b> .\n<http://example.org/b> <http://example.org/p> <http://example.org/c> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Multiple N3 triples: graph size is 2" 2 (. g size))))
+          ((error e)
+            (set! s (assert-true arena s "Multiple N3 triples: parse should succeed" false)))))
+
+      (test-summary arena s)
+      0))))

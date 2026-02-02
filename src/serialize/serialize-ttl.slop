@@ -1,0 +1,462 @@
+;; ttl.slop - Turtle (TTL) serializer for RDF
+;; Generates W3C Turtle syntax from Graph data structures
+(module serialize-ttl
+  (export
+    SerializeConfig
+    SerializeError
+    TtlFileError
+    serialize-ttl-string
+    serialize-ttl-file
+    serialize-term
+    serialize-iri
+    serialize-literal
+    serialize-blank
+    serialize-prefixes
+    serialize-base)
+
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add graph-size graph-contains term-eq))
+  (import ttl (PrefixMap PrefixBinding is-pn-chars is-pn-chars-base prefix-map-lookup))
+  (import vocab (XSD_NS XSD_STRING XSD_BOOLEAN XSD_INTEGER XSD_DECIMAL XSD_DOUBLE))
+  (import file (file-open file-close file-write-line FileMode FileError))
+  (import strlib (starts-with substring char-at is-digit is-alpha))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Types
+  ;; ---------------------------------------------------------------------------
+
+  (type SerializeConfig (record
+    (prefixes PrefixMap)
+    (base-iri (Option String))
+    (indent-width (Int 0 ..))))
+
+  (type SerializeError (record
+    (message String)))
+
+  (type TtlFileError (union
+    (serialize-error SerializeError)
+    (file-error FileError)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Internal: subject-predicate-object grouping types
+  ;; ---------------------------------------------------------------------------
+
+  (type ObjectGroup (record
+    (predicate Term)
+    (objects (List Term))))
+
+  (type SubjectGroup (record
+    (subject Term)
+    (pred-groups (List ObjectGroup))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; String escaping
+  ;; ---------------------------------------------------------------------------
+
+  (fn escape-string-char ((in arena Arena) (in c (Int 0 .. 127)))
+    (@intent "Escape a single character for Turtle string output")
+    (@spec ((Arena (Int 0 .. 127)) -> String))
+    (@alloc arena)
+    (@pure)
+    (cond
+      ((== c 10) "\\n")
+      ((== c 13) "\\r")
+      ((== c  9) "\\t")
+      ((== c 92) "\\\\")
+      ((== c 34) "\\\"")
+      (else (string-push-char arena "" c))))
+
+  (fn escape-string ((in arena Arena) (in s String))
+    (@intent "Escape all special characters in a string for Turtle output")
+    (@spec ((Arena String) -> String))
+    (@alloc arena)
+    (@post (>= (string-len $result) 0))
+    (let ((len (string-len s))
+          (mut result ""))
+      (let ((mut i 0))
+        (while (< i len)
+          (let ((c (char-at s i)))
+            (set! result (string-concat arena result (escape-string-char arena c)))
+            (set! i (+ i 1)))))
+      result))
+
+  (fn string-contains-newline ((in s String))
+    (@intent "Check if string contains newline characters")
+    (@spec ((String) -> Bool))
+    (@pure)
+    (let ((len (string-len s))
+          (mut found false)
+          (mut i 0))
+      (while (and (< i len) (not found))
+        (let ((c (char-at s i)))
+          (when (or (== c 10) (== c 13))
+            (set! found true))
+          (set! i (+ i 1))))
+      found))
+
+  ;; ---------------------------------------------------------------------------
+  ;; IRI serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn valid-pn-local ((in s String))
+    (@intent "Check if string is a valid PN_LOCAL (prefixed name local part)")
+    (@spec ((String) -> Bool))
+    (@pure)
+    (let ((len (string-len s)))
+      (if (== len 0)
+        true
+        (let ((mut ok true)
+              (mut i 0))
+          (while (and (< i len) ok)
+            (let ((c (char-at s i)))
+              (when (not (is-pn-chars c))
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok))))
+
+  (fn serialize-iri ((in arena Arena) (in iri IRI) (in prefixes PrefixMap))
+    (@intent "Serialize an IRI, using prefix compression when possible")
+    (@spec ((Arena IRI PrefixMap) -> String))
+    (@alloc arena)
+    (@pre (> (string-len iri.value) 0))
+    (@post (> (string-len $result) 0))
+    (@example
+      ((IRI "http://example.org/foo") (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1))
+      ->
+      "ex:foo")
+    (@example
+      ((IRI "http://other.org/bar") (PrefixMap (list PrefixBinding) 0))
+      ->
+      "<http://other.org/bar>")
+    (let ((iri-val (. iri value))
+          (mut compressed (Option String) (none)))
+      ;; Try each prefix binding to find a match
+      (for-each (b (. prefixes bindings))
+        (match compressed
+          ((some _) (do))
+          ((none)
+            (let ((prefix-iri (. b iri)))
+              (when (starts-with iri-val prefix-iri)
+                (let ((local (substring arena iri-val (string-len prefix-iri)
+                               (- (string-len iri-val) (string-len prefix-iri)))))
+                  (when (valid-pn-local local)
+                    (set! compressed (some (string-concat arena
+                      (string-concat arena (. b prefix) ":")
+                      local))))))))))
+      (match compressed
+        ((some s) s)
+        ((none) (string-concat arena (string-concat arena "<" iri-val) ">")))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Literal serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-literal ((in arena Arena) (in lit Literal))
+    (@intent "Serialize a literal with appropriate Turtle syntax shortcuts")
+    (@spec ((Arena Literal) -> String))
+    (@alloc arena)
+    (@post (> (string-len $result) 0))
+    (@example
+      ((Literal "hello" (none) (none)))
+      ->
+      "\"hello\"")
+    (@example
+      ((Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))
+      ->
+      "42")
+    (@example
+      ((Literal "bonjour" (none) (some "fr")))
+      ->
+      "\"bonjour\"@fr")
+    (let ((val (. lit value))
+          (dt (. lit datatype))
+          (lang (. lit lang)))
+      ;; Language-tagged literal
+      (match lang
+        ((some l)
+          (string-concat arena
+            (string-concat arena
+              (string-concat arena "\"" (escape-string arena val))
+              "\"@")
+            l))
+        ((none)
+          ;; Check datatype shortcuts
+          (match dt
+            ((some dt-iri)
+              (cond
+                ;; xsd:integer — bare number
+                ((string-eq dt-iri XSD_INTEGER) val)
+                ;; xsd:decimal — bare decimal
+                ((string-eq dt-iri XSD_DECIMAL) val)
+                ;; xsd:double — bare double
+                ((string-eq dt-iri XSD_DOUBLE) val)
+                ;; xsd:boolean — bare true/false
+                ((string-eq dt-iri XSD_BOOLEAN) val)
+                ;; xsd:string — implicit, no ^^
+                ((string-eq dt-iri XSD_STRING)
+                  (if (string-contains-newline val)
+                    (string-concat arena
+                      (string-concat arena "\"\"\"" (escape-string arena val))
+                      "\"\"\"")
+                    (string-concat arena
+                      (string-concat arena "\"" (escape-string arena val))
+                      "\"")))
+                ;; Other datatype — full form
+                (else
+                  (string-concat arena
+                    (string-concat arena
+                      (string-concat arena
+                        (string-concat arena "\"" (escape-string arena val))
+                        "\"^^<")
+                      dt-iri)
+                    ">"))))
+            ;; No datatype, no lang — plain string
+            ((none)
+              (if (string-contains-newline val)
+                (string-concat arena
+                  (string-concat arena "\"\"\"" (escape-string arena val))
+                  "\"\"\"")
+                (string-concat arena
+                  (string-concat arena "\"" (escape-string arena val))
+                  "\""))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Blank node serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-blank ((in arena Arena) (in node BlankNode))
+    (@intent "Serialize a blank node as _:bN")
+    (@spec ((Arena BlankNode) -> String))
+    (@alloc arena)
+    (@pre (>= node.id 0))
+    (@post (starts-with $result "_:"))
+    (@example ((BlankNode 0)) -> "_:b0")
+    (@example ((BlankNode 42)) -> "_:b42")
+    (string-concat arena "_:b" (int-to-string arena (. node id))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Term serialization
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-term ((in arena Arena) (in t Term) (in prefixes PrefixMap))
+    (@intent "Serialize any RDF term to Turtle string")
+    (@spec ((Arena Term PrefixMap) -> String))
+    (@alloc arena)
+    (@post (> (string-len $result) 0))
+    (@example
+      ((term-iri (IRI "http://example.org/foo")) (PrefixMap (list PrefixBinding) 0))
+      ->
+      "<http://example.org/foo>")
+    (match t
+      ((term-iri iri) (serialize-iri arena iri prefixes))
+      ((term-blank node) (serialize-blank arena node))
+      ((term-literal lit) (serialize-literal arena lit))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Prefix / base declarations
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-prefixes ((in arena Arena) (in prefixes PrefixMap))
+    (@intent "Emit @prefix declarations for all bindings in the prefix map")
+    (@spec ((Arena PrefixMap) -> String))
+    (@alloc arena)
+    (@post (>= (string-len $result) 0))
+    (let ((mut result ""))
+      (for-each (b (. prefixes bindings))
+        (set! result (string-concat arena result
+          (string-concat arena
+            (string-concat arena
+              (string-concat arena "@prefix " (. b prefix))
+              ": <")
+            (string-concat arena (. b iri) "> .\n")))))
+      result))
+
+  (fn serialize-base ((in arena Arena) (in base (Option String)))
+    (@intent "Emit @base declaration if present")
+    (@spec ((Arena (Option String)) -> String))
+    (@alloc arena)
+    (match base
+      ((some iri) (string-concat arena (string-concat arena "@base <" iri) "> .\n"))
+      ((none) "")))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Indent helper
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-indent ((in arena Arena) (in width (Int 0 ..)))
+    (@intent "Create an indentation string of given width")
+    (@spec ((Arena (Int 0 ..)) -> String))
+    (@alloc arena)
+    (@pure)
+    (let ((mut result "")
+          (mut i 0))
+      (while (< i width)
+        (set! result (string-concat arena result " "))
+        (set! i (+ i 1)))
+      result))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Triple grouping
+  ;; ---------------------------------------------------------------------------
+
+  (fn find-subject-group ((in groups (List SubjectGroup)) (in subj Term))
+    (@intent "Find existing subject group or return none")
+    (@spec (((List SubjectGroup) Term) -> (Option (Int 0 ..))))
+    (@pure)
+    (let ((mut found (Option (Int 0 ..)) (none))
+          (mut i 0))
+      (for-each (sg groups)
+        (match found
+          ((some _) (do))
+          ((none)
+            (when (term-eq (. sg subject) subj)
+              (set! found (some i)))))
+        (set! i (+ i 1)))
+      found))
+
+  (fn find-pred-group ((in groups (List ObjectGroup)) (in pred Term))
+    (@intent "Find existing predicate group or return none")
+    (@spec (((List ObjectGroup) Term) -> (Option (Int 0 ..))))
+    (@pure)
+    (let ((mut found (Option (Int 0 ..)) (none))
+          (mut i 0))
+      (for-each (og groups)
+        (match found
+          ((some _) (do))
+          ((none)
+            (when (term-eq (. og predicate) pred)
+              (set! found (some i)))))
+        (set! i (+ i 1)))
+      found))
+
+  (fn build-groups ((in arena Arena) (in g Graph))
+    (@intent "Group triples by subject, then by predicate for compact serialization")
+    (@spec ((Arena Graph) -> (List SubjectGroup)))
+    (@alloc arena)
+    (let ((mut groups (list-new arena SubjectGroup)))
+      (for-each (triple (. g triples))
+        (let ((subj (. triple subject))
+              (pred (. triple predicate))
+              (obj (. triple object)))
+          (let ((sg-idx (find-subject-group groups subj)))
+            (match sg-idx
+              ((some idx)
+                ;; Subject exists; find or create pred group
+                (match (list-get groups idx)
+                  ((some sg)
+                    (let ((pg-idx (find-pred-group (. sg pred-groups) pred)))
+                      (match pg-idx
+                        ((some pidx)
+                          ;; Predicate group exists; add object
+                          (match (list-get (. sg pred-groups) pidx)
+                            ((some pg) (list-push (. pg objects) obj))
+                            ((none) (do))))
+                        ((none)
+                          ;; New predicate for this subject
+                          (let ((new-pg (record-new ObjectGroup
+                                  (predicate pred)
+                                  (objects (do
+                                    (let ((ol (list-new arena Term)))
+                                      (list-push ol obj)
+                                      ol))))))
+                            (list-push (. sg pred-groups) new-pg))))))
+                  ((none) (do))))
+              ((none)
+                ;; New subject
+                (let ((new-pg (record-new ObjectGroup
+                        (predicate pred)
+                        (objects (do
+                          (let ((ol (list-new arena Term)))
+                            (list-push ol obj)
+                            ol))))))
+                  (let ((new-sg (record-new SubjectGroup
+                          (subject subj)
+                          (pred-groups (do
+                            (let ((pl (list-new arena ObjectGroup)))
+                              (list-push pl new-pg)
+                              pl))))))
+                    (list-push groups new-sg))))))))
+      groups))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Main serializer
+  ;; ---------------------------------------------------------------------------
+
+  (fn serialize-ttl-string ((in arena Arena) (in g Graph) (in config SerializeConfig))
+    (@intent "Serialize an RDF graph to a Turtle string with prefix compression and grouping")
+    (@spec ((Arena Graph SerializeConfig) -> String))
+    (@alloc arena)
+    (@post (>= (string-len $result) 0))
+    (@property "round-trip"
+      (forall (g Graph)
+        (let ((s (serialize-ttl-string arena g config)))
+          (match (parse-ttl-string arena s)
+            ((ok g2) (== (graph-size g2) (graph-size g)))
+            ((error _) false)))))
+    (let ((prefixes (. config prefixes))
+          (base (. config base-iri))
+          (indent (make-indent arena (. config indent-width))))
+      (let ((mut result ""))
+        ;; Emit base
+        (set! result (string-concat arena result (serialize-base arena base)))
+        ;; Emit prefixes
+        (let ((prefix-str (serialize-prefixes arena prefixes)))
+          (when (> (string-len prefix-str) 0)
+            (set! result (string-concat arena result prefix-str))
+            (set! result (string-concat arena result "\n"))))
+        ;; Emit triples — grouped by subject with ; and , shorthand
+        ;; We track the previous subject and predicate to decide formatting
+        (let ((mut prev-subj "")
+              (mut prev-pred "")
+              (mut first-triple true))
+          (for-each (triple (. g triples))
+            (let ((subj-str (serialize-term arena (. triple subject) prefixes))
+                  (pred-str (serialize-term arena (. triple predicate) prefixes))
+                  (obj-str (serialize-term arena (. triple object) prefixes)))
+              (cond
+                ;; First triple
+                (first-triple
+                  (set! result (string-concat arena result subj-str))
+                  (set! result (string-concat arena result " "))
+                  (set! result (string-concat arena result pred-str))
+                  (set! result (string-concat arena result " "))
+                  (set! result (string-concat arena result obj-str))
+                  (set! first-triple false))
+                ;; Same subject, same predicate — use ,
+                ((and (string-eq subj-str prev-subj) (string-eq pred-str prev-pred))
+                  (set! result (string-concat arena result ", "))
+                  (set! result (string-concat arena result obj-str)))
+                ;; Same subject, different predicate — use ;
+                ((string-eq subj-str prev-subj)
+                  (set! result (string-concat arena result " ;\n"))
+                  (set! result (string-concat arena result indent))
+                  (set! result (string-concat arena result pred-str))
+                  (set! result (string-concat arena result " "))
+                  (set! result (string-concat arena result obj-str)))
+                ;; Different subject — close previous, start new
+                (else
+                  (set! result (string-concat arena result " .\n"))
+                  (set! result (string-concat arena result subj-str))
+                  (set! result (string-concat arena result " "))
+                  (set! result (string-concat arena result pred-str))
+                  (set! result (string-concat arena result " "))
+                  (set! result (string-concat arena result obj-str))))
+              (set! prev-subj subj-str)
+              (set! prev-pred pred-str)))
+          (when (not first-triple)
+            (set! result (string-concat arena result " .\n"))))
+        result)))
+
+  (fn serialize-ttl-file ((in arena Arena) (in g Graph) (in config SerializeConfig) (in path String))
+    (@intent "Serialize an RDF graph and write to a Turtle file")
+    (@spec ((Arena Graph SerializeConfig String) -> (Result Bool TtlFileError)))
+    (@alloc arena)
+    (@pre (> (string-len path) 0))
+    (let ((content (serialize-ttl-string arena g config)))
+      (let ((f (file-open path 'write)))
+        (match f
+          ((ok handle)
+            (do
+              (file-write-line (addr handle) content)
+              (file-close (addr handle))
+              (ok true)))
+          ((error e) (error (union-new TtlFileError file-error e))))))))

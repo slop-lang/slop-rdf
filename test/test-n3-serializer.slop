@@ -1,0 +1,159 @@
+(module test-n3-serializer
+  (@doc "Integration tests for N3 serializer")
+
+  (import rdf
+    (Term Triple Graph make-iri make-blank make-literal make-triple make-graph
+     graph-add graph-size))
+  (import ttl (PrefixMap PrefixBinding make-prefix-map prefix-map-add))
+  (import n3 (N3Graph N3Term N3Triple Formula FormulaId QuickVar
+              make-n3-graph n3-graph-add-triple n3-graph-add-formula parse-n3-string))
+  (import serialize-ttl (SerializeConfig))
+  (import serialize-n3 (serialize-n3-string serialize-n3-term serialize-formula serialize-quick-var))
+  (import strlib (starts-with contains))
+  (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
+
+  (fn make-default-config ((in arena Arena) (in prefixes PrefixMap))
+    (@intent "Create a default serialize config with given prefixes")
+    (@spec ((Arena PrefixMap) -> SerializeConfig))
+    (@alloc arena)
+    (record-new SerializeConfig
+      (prefixes prefixes)
+      (base-iri (none))
+      (indent-width 4)))
+
+  (fn main ()
+    (@intent "Run all N3 serializer integration tests")
+    (@spec (() -> Int))
+    (with-arena 131072
+
+    (println "=== N3 Serializer Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: empty N3 graph
+      ;; -----------------------------------------------------------------------
+      (println "-- Empty N3 Graph --")
+      (let ((g (make-n3-graph arena))
+            (pm (make-prefix-map arena))
+            (config (make-default-config arena pm)))
+        (let ((result (serialize-n3-string arena g config)))
+          (set! s (assert-eq-int arena s "Empty N3 graph: output length is 0" 0 (string-len result)))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-quick-var
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Quick Variable --")
+      (let ((result (serialize-quick-var arena (record-new QuickVar (name "x")))))
+        (set! s (assert-true arena s "QuickVar: ?x" (string-eq result "?x"))))
+      (let ((result (serialize-quick-var arena (record-new QuickVar (name "person")))))
+        (set! s (assert-true arena s "QuickVar: ?person" (string-eq result "?person"))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-formula empty
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Empty Formula --")
+      (let ((pm (make-prefix-map arena))
+            (f (record-new Formula (id 0) (graph (make-graph arena)))))
+        (let ((result (serialize-formula arena f pm)))
+          (set! s (assert-true arena s "Empty formula: { }" (string-eq result "{ }")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-formula with triples
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Formula with Triples --")
+      (let ((pm (make-prefix-map arena))
+            (g (graph-add arena (make-graph arena)
+                (make-triple arena
+                  (make-iri arena "http://example.org/a")
+                  (make-iri arena "http://example.org/b")
+                  (make-iri arena "http://example.org/c")))))
+        (let ((f (record-new Formula (id 0) (graph g))))
+          (let ((result (serialize-formula arena f pm)))
+            (set! s (assert-true arena s "Formula: starts with {" (starts-with result "{")))
+            (set! s (assert-true arena s "Formula: contains triple" (contains result "http://example.org/a"))))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-n3-term for RDF term
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- N3 Term (RDF) --")
+      (let ((pm (make-prefix-map arena))
+            (term (union-new N3Term n3-rdf (make-iri arena "http://example.org/foo"))))
+        (let ((result (serialize-n3-term arena term pm)))
+          (set! s (assert-true arena s "N3 RDF term: <http://example.org/foo>" (string-eq result "<http://example.org/foo>")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-n3-term for quick var
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- N3 Term (QuickVar) --")
+      (let ((pm (make-prefix-map arena))
+            (term (union-new N3Term n3-quick-var (record-new QuickVar (name "x")))))
+        (let ((result (serialize-n3-term arena term pm)))
+          (set! s (assert-true arena s "N3 quick var term: ?x" (string-eq result "?x")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: N3 graph with simple RDF triple
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- N3 Graph with RDF Triple --")
+      (let ((pm (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/"))
+            (mut g (make-n3-graph arena)))
+        (set! g (n3-graph-add-triple arena g
+          (record-new N3Triple
+            (subject (union-new N3Term n3-rdf (make-iri arena "http://example.org/s")))
+            (predicate (union-new N3Term n3-rdf (make-iri arena "http://example.org/p")))
+            (object (union-new N3Term n3-rdf (make-iri arena "http://example.org/o"))))))
+        (let ((config (make-default-config arena pm)))
+          (let ((result (serialize-n3-string arena g config)))
+            (set! s (assert-true arena s "N3 graph: contains ex:s" (contains result "ex:s")))
+            (set! s (assert-true arena s "N3 graph: contains dot" (contains result "."))))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: N3 graph with formula triple
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- N3 Graph with Formula --")
+      (let ((pm (make-prefix-map arena))
+            (mut g (make-n3-graph arena))
+            (inner-g (graph-add arena (make-graph arena)
+                      (make-triple arena
+                        (make-iri arena "http://example.org/a")
+                        (make-iri arena "http://example.org/b")
+                        (make-iri arena "http://example.org/c"))))
+            (f (record-new Formula (id 0) (graph inner-g))))
+        (set! g (n3-graph-add-triple arena g
+          (record-new N3Triple
+            (subject (union-new N3Term n3-formula f))
+            (predicate (union-new N3Term n3-rdf (make-iri arena "http://www.w3.org/2000/10/swap/log#implies")))
+            (object (union-new N3Term n3-formula (record-new Formula (id 1) (graph (make-graph arena))))))))
+        (let ((config (make-default-config arena pm)))
+          (let ((result (serialize-n3-string arena g config)))
+            (set! s (assert-true arena s "N3 formula: contains {" (contains result "{")))
+            (set! s (assert-true arena s "N3 formula: contains }" (contains result "}"))))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: round-trip N3 (simple RDF subset)
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- N3 Round-Trip (RDF subset) --")
+      (let ((input "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o ."))
+        (match (parse-n3-string arena input)
+          ((ok g1)
+            (let ((pm (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/")))
+              (let ((config (make-default-config arena pm)))
+                (let ((serialized (serialize-n3-string arena g1 config)))
+                  (set! s (assert-true arena s "N3 round-trip: output non-empty" (> (string-len serialized) 0)))))))
+          ((error e)
+            (set! s (assert-true arena s "N3 round-trip: parse should succeed" false)))))
+
+      ;; Summary
+      (println "")
+      (test-summary arena s)
+
+      0))))

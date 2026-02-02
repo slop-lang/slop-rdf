@@ -1,0 +1,6 @@
+Basic Formal Ontology (BFO) 2020
+Source: https://github.com/BFO-ontology/BFO-2020
+Authors: Barry Smith and contributors
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Full license: https://creativecommons.org/licenses/by/4.0/legalcode
+No modifications have been made to the original BFO 2020 OWL file.

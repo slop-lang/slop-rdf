@@ -2,6 +2,7 @@
   (export
     TermKind
     Term
+    BlankNodeId
     IRI
     BlankNode
     Literal

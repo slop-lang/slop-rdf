@@ -1,0 +1,213 @@
+;; common.slop - Shared parsing utilities and error types for RDF formats
+(module common
+  (export
+    ParseErrorKind
+    ParseError
+    ParseState
+    Position
+    make-parse-error
+    make-parse-state
+    state-advance
+    state-peek
+    state-peek-n
+    state-at-end
+    skip-whitespace
+    skip-line
+    expect-char
+    parse-until
+    parse-while
+    ParseWhileResult)
+
+  (import strlib (char-at is-space substring))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Types
+  ;; ---------------------------------------------------------------------------
+
+  (type Position (record
+    (line (Int 1 ..))
+    (column (Int 1 ..))
+    (offset (Int 0 ..))))
+
+  (type ParseErrorKind (enum
+    unexpected-char
+    unexpected-eof
+    invalid-iri
+    invalid-prefix
+    invalid-literal
+    invalid-escape
+    invalid-blank-node
+    unterminated-string
+    unterminated-iri
+    missing-dot
+    missing-semicolon
+    duplicate-prefix
+    unknown-prefix
+    syntax-error))
+
+  (type ParseError (record
+    (kind ParseErrorKind)
+    (message String)
+    (position Position)))
+
+  (type ParseState (record
+    (input String)
+    (offset (Int 0 ..))
+    (line (Int 1 ..))
+    (column (Int 1 ..))))
+
+  (type ParseWhileResult (record
+    (result String)
+    (state ParseState)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Error construction
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-parse-error ((in arena Arena) (in kind ParseErrorKind) (in msg String) (in pos Position))
+    (@intent "Create a parse error with kind, message, and position")
+    (@spec ((Arena ParseErrorKind String Position) -> ParseError))
+    (@alloc arena)
+    (@pure)
+    (@example
+      ('unexpected-char "Expected '>' but got 'x'" (Position 1 10 9))
+      ->
+      (ParseError 'unexpected-char "Expected '>' but got 'x'" (Position 1 10 9)))
+    (record-new ParseError (kind kind) (message msg) (position pos)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Parse state management
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-parse-state ((in arena Arena) (in input String))
+    (@intent "Create initial parse state from input string")
+    (@spec ((Arena String) -> ParseState))
+    (@alloc arena)
+    (@post {$result.offset == 0})
+    (@post {$result.line == 1})
+    (@post {$result.column == 1})
+    (@example ("@prefix ex: <http://example.org/> .") -> (ParseState "@prefix ex: <http://example.org/> ." 0 1 1))
+    (record-new ParseState (input input) (offset 0) (line 1) (column 1)))
+
+  (fn state-at-end ((in state ParseState))
+    (@intent "Check if parser has reached end of input")
+    (@spec ((ParseState) -> Bool))
+    (@pure)
+    (@post {$result == ((. state offset) >= (string-len (. state input)))})
+    (@example ((ParseState "abc" 3 1 4)) -> true)
+    (@example ((ParseState "abc" 2 1 3)) -> false)
+    (>= (. state offset) (string-len (. state input))))
+
+  (fn state-peek ((in state ParseState))
+    (@intent "Peek at current character without consuming, returns 0 at end")
+    (@spec ((ParseState) -> (Int 0 .. 127)))
+    (@pure)
+    (@example ((ParseState "abc" 0 1 1)) -> 97)
+    (@example ((ParseState "abc" 3 1 4)) -> 0)
+    (if (state-at-end state) 0 (char-at (. state input) (. state offset))))
+
+  (fn state-peek-n ((in state ParseState) (in n (Int 0 ..)))
+    (@intent "Peek at character n positions ahead, returns 0 if out of bounds")
+    (@spec ((ParseState (Int 0 ..)) -> (Int 0 .. 127)))
+    (@pure)
+    (@example ((ParseState "abc" 0 1 1) 2) -> 99)
+    (@example ((ParseState "abc" 1 1 2) 5) -> 0)
+    (if (>= (+ (. state offset) n) (string-len (. state input)))
+      0
+      (char-at (. state input) (+ (. state offset) n))))
+
+  (fn state-advance ((in arena Arena) (mut state ParseState))
+    (@intent "Advance state by one character, updating line/column")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (@pre (not (state-at-end state)))
+    (@post {$result.offset == state.offset + 1})
+    (let ((c (state-peek state)))
+      (if (== c 10)
+        (record-new ParseState
+          (input (. state input))
+          (offset (+ (. state offset) 1))
+          (line (+ (. state line) 1))
+          (column 1))
+        (record-new ParseState
+          (input (. state input))
+          (offset (+ (. state offset) 1))
+          (line (. state line))
+          (column (+ (. state column) 1))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Whitespace and comment handling
+  ;; ---------------------------------------------------------------------------
+
+  (fn skip-whitespace ((in arena Arena) (mut state ParseState))
+    (@intent "Skip whitespace characters and comments, return updated state")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (@post (or (state-at-end $result) (not (is-space (state-peek $result)))))
+    (let ((mut s state))
+      (while (and (not (state-at-end s))
+                  (or (is-space (state-peek s)) (== (state-peek s) 35)))
+        (if (== (state-peek s) 35)
+          (set! s (skip-line arena s))
+          (set! s (state-advance arena s))))
+      s))
+
+  (fn skip-line ((in arena Arena) (mut state ParseState))
+    (@intent "Skip to end of current line (for comment handling)")
+    (@spec ((Arena ParseState) -> ParseState))
+    (@alloc arena)
+    (let ((mut s state))
+      (while (and (not (state-at-end s)) (!= (state-peek s) 10))
+        (set! s (state-advance arena s)))
+      (if (not (state-at-end s))
+        (state-advance arena s)
+        s)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Character expectations
+  ;; ---------------------------------------------------------------------------
+
+  (fn expect-char ((in arena Arena) (mut state ParseState) (in expected (Int 0 .. 127)))
+    (@intent "Consume expected character or return error")
+    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseState ParseError)))
+    (@alloc arena)
+    (@example ((ParseState "abc" 0 1 1) 97) -> (ok (ParseState "abc" 1 1 2)))
+    (if (state-at-end state)
+      (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
+        (record-new Position (line (. state line)) (column (. state column)) (offset (. state offset)))))
+      (if (== (state-peek state) expected)
+        (ok (state-advance arena state))
+        (error (make-parse-error arena 'unexpected-char "Unexpected character"
+          (record-new Position (line (. state line)) (column (. state column)) (offset (. state offset))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Character sequence parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-while ((in arena Arena) (mut state ParseState) (in predicate (Fn ((Int 0 .. 127)) -> Bool)))
+    (@intent "Parse characters while predicate returns true, return collected string")
+    (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> ParseWhileResult))
+    (@alloc arena)
+    (let ((start (. state offset))
+          (mut s state))
+      (while (and (not (state-at-end s)) (predicate (state-peek s)))
+        (set! s (state-advance arena s)))
+      (record-new ParseWhileResult
+        (result (substring arena (. state input) start (- (. s offset) start)))
+        (state s))))
+
+  (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
+    (@intent "Parse characters until terminator is found")
+    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseWhileResult ParseError)))
+    (@alloc arena)
+    (let ((start (. state offset))
+          (mut s state))
+      (while (and (not (state-at-end s)) (!= (state-peek s) terminator))
+        (set! s (state-advance arena s)))
+      (if (state-at-end s)
+        (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
+          (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset)))))
+        (ok (record-new ParseWhileResult
+          (result (substring arena (. state input) start (- (. s offset) start)))
+          (state (state-advance arena s))))))))
+

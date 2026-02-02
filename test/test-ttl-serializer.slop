@@ -1,0 +1,183 @@
+(module test-ttl-serializer
+  (@doc "Integration tests for TTL (Turtle) serializer")
+
+  (import rdf
+    (Term IRI BlankNode Literal Graph make-iri make-blank make-literal make-triple make-graph
+     graph-add graph-size graph-contains))
+  (import ttl (PrefixMap PrefixBinding parse-ttl-string make-prefix-map prefix-map-add))
+  (import serialize-ttl (SerializeConfig serialize-ttl-string serialize-term serialize-iri serialize-literal serialize-blank serialize-prefixes serialize-base))
+  (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_DOUBLE))
+  (import strlib (contains))
+  (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
+
+  (fn make-default-config ((in arena Arena) (in prefixes PrefixMap))
+    (@intent "Create a default serialize config with given prefixes")
+    (@spec ((Arena PrefixMap) -> SerializeConfig))
+    (@alloc arena)
+    (record-new SerializeConfig
+      (prefixes prefixes)
+      (base-iri (none))
+      (indent-width 4)))
+
+  (fn main ()
+    (@intent "Run all TTL serializer integration tests")
+    (@spec (() -> Int))
+    (with-arena 131072
+
+    (println "=== TTL Serializer Tests ===")
+    (println "")
+
+    (let ((mut s (test-state-new arena)))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: empty graph serialization
+      ;; -----------------------------------------------------------------------
+      (println "-- Empty Graph --")
+      (let ((g (make-graph arena))
+            (pm (make-prefix-map arena))
+            (config (make-default-config arena pm)))
+        (let ((result (serialize-ttl-string arena g config)))
+          (set! s (assert-eq-int arena s "Empty graph: output length is 0" 0 (string-len result)))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: single triple with full IRIs
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Single Triple (Full IRIs) --")
+      (let ((g (graph-add arena (make-graph arena)
+                (make-triple arena
+                  (make-iri arena "http://example.org/s")
+                  (make-iri arena "http://example.org/p")
+                  (make-iri arena "http://example.org/o"))))
+            (pm (make-prefix-map arena))
+            (config (make-default-config arena pm)))
+        (let ((result (serialize-ttl-string arena g config)))
+          (set! s (assert-true arena s "Single triple: output is non-empty" (> (string-len result) 0)))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: prefix compression
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Prefix Compression --")
+      (let ((g (graph-add arena (make-graph arena)
+                (make-triple arena
+                  (make-iri arena "http://example.org/s")
+                  (make-iri arena "http://example.org/p")
+                  (make-iri arena "http://example.org/o"))))
+            (pm (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/")))
+        (let ((config (make-default-config arena pm)))
+          (let ((result (serialize-ttl-string arena g config)))
+            (set! s (assert-true arena s "Prefix: output contains ex:" (contains result "ex:"))))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-iri with prefix
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- serialize-iri Prefix --")
+      (let ((pm (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/")))
+        (let ((result (serialize-iri arena (record-new IRI (value "http://example.org/foo")) pm)))
+          (set! s (assert-true arena s "IRI prefix: result is ex:foo" (string-eq result "ex:foo")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-iri without prefix
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- serialize-iri No Prefix --")
+      (let ((pm (make-prefix-map arena)))
+        (let ((result (serialize-iri arena (record-new IRI (value "http://other.org/bar")) pm)))
+          (set! s (assert-true arena s "IRI no prefix: result is <http://other.org/bar>" (string-eq result "<http://other.org/bar>")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-blank
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- serialize-blank --")
+      (let ((result (serialize-blank arena (record-new BlankNode (id 0)))))
+        (set! s (assert-true arena s "Blank: result is _:b0" (string-eq result "_:b0"))))
+      (let ((result (serialize-blank arena (record-new BlankNode (id 42)))))
+        (set! s (assert-true arena s "Blank: result is _:b42" (string-eq result "_:b42"))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: literal shortcuts
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Literal Shortcuts --")
+      ;; plain string
+      (let ((result (serialize-literal arena (record-new Literal (value "hello") (datatype (none)) (lang (none))))))
+        (set! s (assert-true arena s "Literal plain: \"hello\"" (string-eq result "\"hello\""))))
+      ;; xsd:integer
+      (let ((result (serialize-literal arena (record-new Literal (value "42") (datatype (some XSD_INTEGER)) (lang (none))))))
+        (set! s (assert-true arena s "Literal integer: bare 42" (string-eq result "42"))))
+      ;; xsd:boolean
+      (let ((result (serialize-literal arena (record-new Literal (value "true") (datatype (some XSD_BOOLEAN)) (lang (none))))))
+        (set! s (assert-true arena s "Literal boolean: bare true" (string-eq result "true"))))
+      ;; xsd:string — omit ^^xsd:string
+      (let ((result (serialize-literal arena (record-new Literal (value "hi") (datatype (some XSD_STRING)) (lang (none))))))
+        (set! s (assert-true arena s "Literal xsd:string: \"hi\" (no ^^)" (string-eq result "\"hi\""))))
+      ;; language tag
+      (let ((result (serialize-literal arena (record-new Literal (value "bonjour") (datatype (none)) (lang (some "fr"))))))
+        (set! s (assert-true arena s "Literal lang: \"bonjour\"@fr" (string-eq result "\"bonjour\"@fr"))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: round-trip — parse then serialize then parse again
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Round-Trip --")
+      (let ((input "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o ."))
+        (match (parse-ttl-string arena input)
+          ((ok g1)
+            (let ((pm (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/")))
+              (let ((config (make-default-config arena pm)))
+                (let ((serialized (serialize-ttl-string arena g1 config)))
+                  (match (parse-ttl-string arena serialized)
+                    ((ok g2)
+                      (set! s (assert-eq-int arena s "Round-trip: same graph size" (graph-size g1) (graph-size g2))))
+                    ((error e)
+                      (set! s (assert-true arena s "Round-trip: re-parse should succeed" false))))))))
+          ((error e)
+            (set! s (assert-true arena s "Round-trip: initial parse should succeed" false)))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-prefixes
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Prefix Declarations --")
+      (let ((pm (prefix-map-add arena
+                  (prefix-map-add arena (make-prefix-map arena) "ex" "http://example.org/")
+                  "foaf" "http://xmlns.com/foaf/0.1/")))
+        (let ((result (serialize-prefixes arena pm)))
+          (set! s (assert-true arena s "Prefixes: contains @prefix ex:" (contains result "@prefix ex:")))
+          (set! s (assert-true arena s "Prefixes: contains @prefix foaf:" (contains result "@prefix foaf:")))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: serialize-base
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Base Declaration --")
+      (let ((result (serialize-base arena (some "http://example.org/"))))
+        (set! s (assert-true arena s "Base: contains @base" (contains result "@base"))))
+      (let ((result (serialize-base arena (none))))
+        (set! s (assert-true arena s "Base none: empty" (string-eq result ""))))
+
+      ;; -----------------------------------------------------------------------
+      ;; Test: multiple triples same subject (;-grouping)
+      ;; -----------------------------------------------------------------------
+      (println "")
+      (println "-- Same-Subject Grouping --")
+      (let ((subj (make-iri arena "http://example.org/s"))
+            (mut g (make-graph arena)))
+        (set! g (graph-add arena g
+          (make-triple arena subj (make-iri arena "http://example.org/p1") (make-iri arena "http://example.org/o1"))))
+        (set! g (graph-add arena g
+          (make-triple arena subj (make-iri arena "http://example.org/p2") (make-iri arena "http://example.org/o2"))))
+        (let ((pm (make-prefix-map arena))
+              (config (make-default-config arena pm)))
+          (let ((result (serialize-ttl-string arena g config)))
+            ;; Should contain ; for grouping, not two separate subject blocks
+            (set! s (assert-true arena s "Grouping: contains semicolon" (contains result ";"))))))
+
+      ;; Summary
+      (println "")
+      (test-summary arena s)
+
+      0))))

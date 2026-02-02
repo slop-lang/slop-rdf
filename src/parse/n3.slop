@@ -1,0 +1,693 @@
+;; n3.slop - Notation3 (N3) format parser for RDF
+;; N3 is a superset of Turtle with formulas, rules, and additional syntax
+(module n3
+  (export
+    N3ParseContext
+    N3Term
+    N3Triple
+    Formula
+    FormulaId
+    QuickVar
+    N3Graph
+    make-n3-graph
+    n3-graph-add-triple
+    n3-graph-add-formula
+    parse-n3-string
+    parse-n3-file
+    parse-formula
+    parse-path-expression
+    parse-quick-variable
+    is-formula-start
+    is-path-operator)
+
+  (import rdf (Term Triple Graph IRI Literal BlankNode BlankNodeId make-iri make-blank make-literal make-triple make-graph graph-add))
+  (import common (ParseState ParseError ParseErrorKind Position ParseWhileResult make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
+  (import ttl (PrefixMap TtlParseContext make-prefix-map prefix-map-add prefix-map-lookup make-ttl-context parse-iri-ref parse-prefixed-name parse-blank-node parse-literal parse-term parse-directive parse-triple is-pn-chars-base is-pn-chars))
+  (import file (file-open file-read-all file-close FileMode FileError))
+  (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3-specific types
+  ;; ---------------------------------------------------------------------------
+
+  (type FormulaId (Int 0 ..))
+
+  (type Formula (record
+    (id FormulaId)
+    (graph Graph)))
+
+  (type QuickVar (record
+    (name String)))
+
+  (type N3Term (union
+    (n3-rdf Term)
+    (n3-formula Formula)
+    (n3-quick-var QuickVar)))
+
+  (type N3Triple (record
+    (subject N3Term)
+    (predicate N3Term)
+    (object N3Term)))
+
+  (type N3Graph (record
+    (triples (List N3Triple))
+    (formulas (List Formula))
+    (size (Int 0 ..))))
+
+  (type N3ParseContext (record
+    (ttl-ctx TtlParseContext)
+    (formula-counter FormulaId)
+    (in-formula Bool)
+    (current-formula-id (Option FormulaId))))
+
+  (type GenFormulaResult (record
+    (id FormulaId)
+    (ctx N3ParseContext)))
+
+  (type N3TermResult (record
+    (term N3Term)
+    (ctx N3ParseContext)))
+
+  (type FormulaResult (record
+    (formula Formula)
+    (ctx N3ParseContext)))
+
+  (type N3TripleResult (record
+    (triple N3Triple)
+    (ctx N3ParseContext)))
+
+  (type N3FileError (union
+    (n3-parse-error ParseError)
+    (n3-file-error FileError)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Context management
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-n3-context ((in arena Arena) (in input String))
+    (@intent "Create initial N3 parsing context")
+    (@spec ((Arena String) -> N3ParseContext))
+    (@alloc arena)
+    (@post {$result.formula-counter == 0})
+    (@post {$result.in-formula == false})
+    ;; (@example
+    ;;   ("@prefix : <http://example.org/> .")
+    ;;   ->
+    ;;   (N3ParseContext ...))
+    (record-new N3ParseContext
+      (ttl-ctx (make-ttl-context arena input))
+      (formula-counter 0)
+      (in-formula false)
+      (current-formula-id (none))))
+
+  (fn context-gen-formula-id ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Generate a fresh formula ID and update counter")
+    (@spec ((Arena N3ParseContext) -> GenFormulaResult))
+    (@alloc arena)
+    (@post {$result.id == ctx.formula-counter})
+    (@post {$result.ctx.formula-counter == ctx.formula-counter + 1})
+    (record-new GenFormulaResult
+      (id (. ctx formula-counter))
+      (ctx (record-new N3ParseContext
+        (ttl-ctx (. ctx ttl-ctx))
+        (formula-counter (+ (. ctx formula-counter) 1))
+        (in-formula (. ctx in-formula))
+        (current-formula-id (. ctx current-formula-id))))))
+
+  (fn context-enter-formula ((in arena Arena) (mut ctx N3ParseContext) (in formula-id FormulaId))
+    (@intent "Enter formula parsing mode")
+    (@spec ((Arena N3ParseContext FormulaId) -> N3ParseContext))
+    (@alloc arena)
+    (@post {$result.in-formula == true})
+    (@post (match $result.current-formula-id ((some id) {id == formula-id}) ((none) false)))
+    (record-new N3ParseContext
+      (ttl-ctx (. ctx ttl-ctx))
+      (formula-counter (. ctx formula-counter))
+      (in-formula true)
+      (current-formula-id (some formula-id))))
+
+  (fn context-exit-formula ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Exit formula parsing mode")
+    (@spec ((Arena N3ParseContext) -> N3ParseContext))
+    (@alloc arena)
+    (@pre {ctx.in-formula == true})
+    (@post {$result.in-formula == false})
+    (@post (match $result.current-formula-id ((none) true) ((some _) false)))
+    (record-new N3ParseContext
+      (ttl-ctx (. ctx ttl-ctx))
+      (formula-counter (. ctx formula-counter))
+      (in-formula false)
+      (current-formula-id (none))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3-specific syntax detection
+  ;; ---------------------------------------------------------------------------
+
+  (fn is-formula-start ((in c (Int 0 .. 127)))
+    (@intent "Check if character starts a formula (opening brace)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (123) -> true)
+    (@example (60) -> false)
+    (== c 123))
+
+  (fn is-formula-end ((in c (Int 0 .. 127)))
+    (@intent "Check if character ends a formula (closing brace)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (125) -> true)
+    (@example (62) -> false)
+    (== c 125))
+
+  (fn is-path-operator ((in c (Int 0 .. 127)))
+    (@intent "Check if character is a path operator (! or ^)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (33) -> true)
+    (@example (94) -> true)
+    (@example (46) -> false)
+    (or (== c 33) (== c 94)))
+
+  (fn is-quick-var-start ((in c (Int 0 .. 127)))
+    (@intent "Check if character starts a quick variable (?)")
+    (@spec (((Int 0 .. 127)) -> Bool))
+    (@pure)
+    (@example (63) -> true)
+    (@example (95) -> false)
+    (== c 63))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Quick variable parsing (?varname)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-quick-variable ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse a quick variable: ?name")
+    (@spec ((Arena N3ParseContext) -> (Result N3TermResult ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.ttl-ctx.state) == 63})
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
+    (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
+      (let ((name-result (parse-while arena s1 is-pn-chars)))
+        (ok (record-new N3TermResult
+          (term (union-new N3Term n3-quick-var (record-new QuickVar (name (. name-result result)))))
+          (ctx (record-new N3ParseContext
+            (ttl-ctx (record-new TtlParseContext
+              (prefixes (. (. ctx ttl-ctx) prefixes))
+              (base-iri (. (. ctx ttl-ctx) base-iri))
+              (blank-counter (. (. ctx ttl-ctx) blank-counter))
+              (state (. name-result state))))
+            (formula-counter (. ctx formula-counter))
+            (in-formula (. ctx in-formula))
+            (current-formula-id (. ctx current-formula-id)))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Formula parsing { ... }
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-formula ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse a formula (quoted graph): { triples... }")
+    (@spec ((Arena N3ParseContext) -> (Result FormulaResult ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.ttl-ctx.state) == 123})
+    (@example
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ (ParseState "{ :s :p :o }" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (formula (Formula 0 (Graph ...))) (ctx ...))))
+    (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
+      (let ((ctx1 (record-new N3ParseContext
+              (ttl-ctx (record-new TtlParseContext
+                (prefixes (. (. ctx ttl-ctx) prefixes))
+                (base-iri (. (. ctx ttl-ctx) base-iri))
+                (blank-counter (. (. ctx ttl-ctx) blank-counter))
+                (state s1)))
+              (formula-counter (. ctx formula-counter))
+              (in-formula (. ctx in-formula))
+              (current-formula-id (. ctx current-formula-id)))))
+        (let ((gen (context-gen-formula-id arena ctx1)))
+          (let ((fid (. gen id))
+                (ctx2 (context-enter-formula arena (. gen ctx) fid)))
+            (let ((mut g (make-graph arena))
+                  (mut cur-ctx ctx2))
+              (let ((mut s (skip-whitespace arena (. (. cur-ctx ttl-ctx) state))))
+                (set! cur-ctx (record-new N3ParseContext
+                  (ttl-ctx (record-new TtlParseContext
+                    (prefixes (. (. cur-ctx ttl-ctx) prefixes))
+                    (base-iri (. (. cur-ctx ttl-ctx) base-iri))
+                    (blank-counter (. (. cur-ctx ttl-ctx) blank-counter))
+                    (state s)))
+                  (formula-counter (. cur-ctx formula-counter))
+                  (in-formula (. cur-ctx in-formula))
+                  (current-formula-id (. cur-ctx current-formula-id))))
+                (while (not (is-formula-end (state-peek (. (. cur-ctx ttl-ctx) state))))
+                  (let ((triple-result (parse-n3-triple arena cur-ctx)))
+                    (match triple-result
+                      ((ok tr)
+                        (do
+                          (set! cur-ctx (. tr ctx))
+                          (let ((s2 (skip-whitespace arena (. (. cur-ctx ttl-ctx) state))))
+                            (set! cur-ctx (record-new N3ParseContext
+                              (ttl-ctx (record-new TtlParseContext
+                                (prefixes (. (. cur-ctx ttl-ctx) prefixes))
+                                (base-iri (. (. cur-ctx ttl-ctx) base-iri))
+                                (blank-counter (. (. cur-ctx ttl-ctx) blank-counter))
+                                (state s2)))
+                              (formula-counter (. cur-ctx formula-counter))
+                              (in-formula (. cur-ctx in-formula))
+                              (current-formula-id (. cur-ctx current-formula-id)))))))
+                      ((error e) (do (return (error e)) ())))))
+                ;; consume '}'
+                (let ((s3 (state-advance arena (. (. cur-ctx ttl-ctx) state))))
+                  (let ((ctx3 (context-exit-formula arena cur-ctx)))
+                    (ok (record-new FormulaResult
+                      (formula (record-new Formula (id fid) (graph g)))
+                      (ctx (record-new N3ParseContext
+                        (ttl-ctx (record-new TtlParseContext
+                          (prefixes (. (. ctx3 ttl-ctx) prefixes))
+                          (base-iri (. (. ctx3 ttl-ctx) base-iri))
+                          (blank-counter (. (. ctx3 ttl-ctx) blank-counter))
+                          (state s3)))
+                        (formula-counter (. ctx3 formula-counter))
+                        (in-formula (. ctx3 in-formula))
+                        (current-formula-id (. ctx3 current-formula-id)))))))))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Path expressions (N3 paths: subject!predicate or subject^predicate)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-path-expression ((in arena Arena) (mut ctx N3ParseContext) (in base N3Term))
+    (@intent "Parse path expression starting from base term: base!pred or base^pred")
+    (@spec ((Arena N3ParseContext N3Term) -> (Result N3TermResult ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext ... (ParseState "!:name" 0 1 1)) (n3-rdf (term-iri (IRI "http://example.org/person"))))
+      ->
+      (ok (record (term ...) (ctx ...))))
+    (let ((op (state-peek (. (. ctx ttl-ctx) state))))
+      (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
+        (let ((ctx1 (record-new N3ParseContext
+                (ttl-ctx (record-new TtlParseContext
+                  (prefixes (. (. ctx ttl-ctx) prefixes))
+                  (base-iri (. (. ctx ttl-ctx) base-iri))
+                  (blank-counter (. (. ctx ttl-ctx) blank-counter))
+                  (state s1)))
+                (formula-counter (. ctx formula-counter))
+                (in-formula (. ctx in-formula))
+                (current-formula-id (. ctx current-formula-id)))))
+          (let ((pred-result (parse-n3-term arena ctx1)))
+            (match pred-result
+              ((ok pr)
+                (ok (record-new N3TermResult
+                  (term (. pr term))
+                  (ctx (. pr ctx)))))
+              ((error e) (error e))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 term parsing (extends Turtle terms)
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-n3-term ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse any N3 term: RDF term, formula, quick variable, or path")
+    (@spec ((Arena N3ParseContext) -> (Result N3TermResult ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "<http://example.org/>" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-rdf (term-iri (IRI "http://example.org/")))) (ctx ...))))
+    (@example
+      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
+    (let ((c (state-peek (. (. ctx ttl-ctx) state))))
+      (cond
+        ((is-formula-start c)
+          (let ((f-result (parse-formula arena ctx)))
+            (match f-result
+              ((ok fr)
+                (ok (record-new N3TermResult
+                  (term (union-new N3Term n3-formula (. fr formula)))
+                  (ctx (. fr ctx)))))
+              ((error e) (error e)))))
+        ((is-quick-var-start c)
+          (parse-quick-variable arena ctx))
+        (else
+          (let ((t-result (parse-term arena (. ctx ttl-ctx))))
+            (match t-result
+              ((ok tr)
+                (let ((new-ctx (record-new N3ParseContext
+                        (ttl-ctx (. tr ctx))
+                        (formula-counter (. ctx formula-counter))
+                        (in-formula (. ctx in-formula))
+                        (current-formula-id (. ctx current-formula-id)))))
+                  (if (is-path-operator (state-peek (. (. tr ctx) state)))
+                    (parse-path-expression arena new-ctx (union-new N3Term n3-rdf (. tr term)))
+                    (ok (record-new N3TermResult
+                      (term (union-new N3Term n3-rdf (. tr term)))
+                      (ctx new-ctx))))))
+              ((error e) (error e))))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 triple parsing
+  ;; ---------------------------------------------------------------------------
+
+  (fn parse-n3-triple ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse an N3 triple with extended term support")
+    (@spec ((Arena N3ParseContext) -> (Result N3TripleResult ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ 0 (ParseState ":s :p :o ." 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (triple (N3Triple ...)) (ctx ...))))
+    (let ((sub-result (parse-n3-term arena ctx)))
+      (match sub-result
+        ((ok sr)
+          (let ((s1 (skip-whitespace arena (. (. (. sr ctx) ttl-ctx) state))))
+            (let ((ctx1 (record-new N3ParseContext
+                    (ttl-ctx (record-new TtlParseContext
+                      (prefixes (. (. (. sr ctx) ttl-ctx) prefixes))
+                      (base-iri (. (. (. sr ctx) ttl-ctx) base-iri))
+                      (blank-counter (. (. (. sr ctx) ttl-ctx) blank-counter))
+                      (state s1)))
+                    (formula-counter (. (. sr ctx) formula-counter))
+                    (in-formula (. (. sr ctx) in-formula))
+                    (current-formula-id (. (. sr ctx) current-formula-id)))))
+              (let ((pred-result (parse-n3-term arena ctx1)))
+                (match pred-result
+                  ((ok pr)
+                    (let ((s2 (skip-whitespace arena (. (. (. pr ctx) ttl-ctx) state))))
+                      (let ((ctx2 (record-new N3ParseContext
+                              (ttl-ctx (record-new TtlParseContext
+                                (prefixes (. (. (. pr ctx) ttl-ctx) prefixes))
+                                (base-iri (. (. (. pr ctx) ttl-ctx) base-iri))
+                                (blank-counter (. (. (. pr ctx) ttl-ctx) blank-counter))
+                                (state s2)))
+                              (formula-counter (. (. pr ctx) formula-counter))
+                              (in-formula (. (. pr ctx) in-formula))
+                              (current-formula-id (. (. pr ctx) current-formula-id)))))
+                        (let ((obj-result (parse-n3-term arena ctx2)))
+                          (match obj-result
+                            ((ok objr)
+                              (let ((s3 (skip-whitespace arena (. (. (. objr ctx) ttl-ctx) state))))
+                                (let ((c3 (state-peek s3)))
+                                  (if (and (. (. objr ctx) in-formula) (or (== c3 125) (state-at-end s3)))
+                                    ;; Inside formula: dot is optional before } or end
+                                    (let ((final-state (if (== c3 46) (state-advance arena s3) s3)))
+                                      (ok (record-new N3TripleResult
+                                        (triple (record-new N3Triple
+                                          (subject (. sr term))
+                                          (predicate (. pr term))
+                                          (object (. objr term))))
+                                        (ctx (record-new N3ParseContext
+                                          (ttl-ctx (record-new TtlParseContext
+                                            (prefixes (. (. (. objr ctx) ttl-ctx) prefixes))
+                                            (base-iri (. (. (. objr ctx) ttl-ctx) base-iri))
+                                            (blank-counter (. (. (. objr ctx) ttl-ctx) blank-counter))
+                                            (state final-state)))
+                                          (formula-counter (. (. objr ctx) formula-counter))
+                                          (in-formula (. (. objr ctx) in-formula))
+                                          (current-formula-id (. (. objr ctx) current-formula-id)))))))
+                                    ;; Outside formula: dot required
+                                    (let ((s4 (expect-char arena s3 46)))
+                                      (match s4
+                                        ((ok s5)
+                                          (ok (record-new N3TripleResult
+                                            (triple (record-new N3Triple
+                                              (subject (. sr term))
+                                              (predicate (. pr term))
+                                              (object (. objr term))))
+                                            (ctx (record-new N3ParseContext
+                                              (ttl-ctx (record-new TtlParseContext
+                                                (prefixes (. (. (. objr ctx) ttl-ctx) prefixes))
+                                                (base-iri (. (. (. objr ctx) ttl-ctx) base-iri))
+                                                (blank-counter (. (. (. objr ctx) ttl-ctx) blank-counter))
+                                                (state s5)))
+                                              (formula-counter (. (. objr ctx) formula-counter))
+                                              (in-formula (. (. objr ctx) in-formula))
+                                              (current-formula-id (. (. objr ctx) current-formula-id)))))))
+                                        ((error e) (error e))))))))
+                            ((error e) (error e)))))))
+                  ((error e) (error e)))))))
+        ((error e) (error e)))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; N3 special predicates
+  ;; ---------------------------------------------------------------------------
+
+  (fn is-implication-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 implication predicate (=>)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (@example ((n3-rdf (term-iri (IRI "http://www.w3.org/2000/10/swap/log#implies")))) -> true)
+    (match term
+      ((n3-rdf t)
+        (match t
+          ((term-iri iri) (string-eq (. iri value) "http://www.w3.org/2000/10/swap/log#implies"))
+          (_ false)))
+      (_ false)))
+
+  (fn is-reverse-implication-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 reverse implication predicate (<=)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (match term
+      ((n3-rdf t)
+        (match t
+          ((term-iri iri) (string-eq (. iri value) "http://www.w3.org/2000/10/swap/log#reverseImplies"))
+          (_ false)))
+      (_ false)))
+
+  (fn is-equivalence-predicate ((in term N3Term))
+    (@intent "Check if term is the N3 equivalence predicate (<=>)")
+    (@spec ((N3Term) -> Bool))
+    (@pure)
+    (match term
+      ((n3-rdf t)
+        (match t
+          ((term-iri iri) (string-eq (. iri value) "http://www.w3.org/2000/10/swap/log#equivalence"))
+          (_ false)))
+      (_ false)))
+
+  (fn parse-implication ((in arena Arena) (mut ctx N3ParseContext))
+    (@intent "Parse N3 implication: { antecedent } => { consequent }")
+    (@spec ((Arena N3ParseContext) -> (Result N3TripleResult ParseError)))
+    (@alloc arena)
+    (@example
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ (ParseState "{ :a :b :c } => { :d :e :f } ." 0 1 1)) 0 false (none)))
+      ->
+      (ok (record (triple (N3Triple (n3-formula ...) ... (n3-formula ...))) (ctx ...))))
+    (let ((ante-result (parse-formula arena ctx)))
+      (match ante-result
+        ((ok ar)
+          (let ((s1 (skip-whitespace arena (. (. (. ar ctx) ttl-ctx) state))))
+            (let ((s2 (expect-char arena s1 61)))
+              (match s2
+                ((ok s3)
+                  (let ((s4 (expect-char arena s3 62)))
+                    (match s4
+                      ((ok s5)
+                        (let ((s6 (skip-whitespace arena s5)))
+                          (let ((ctx1 (record-new N3ParseContext
+                                  (ttl-ctx (record-new TtlParseContext
+                                    (prefixes (. (. (. ar ctx) ttl-ctx) prefixes))
+                                    (base-iri (. (. (. ar ctx) ttl-ctx) base-iri))
+                                    (blank-counter (. (. (. ar ctx) ttl-ctx) blank-counter))
+                                    (state s6)))
+                                  (formula-counter (. (. ar ctx) formula-counter))
+                                  (in-formula (. (. ar ctx) in-formula))
+                                  (current-formula-id (. (. ar ctx) current-formula-id)))))
+                            (let ((cons-result (parse-formula arena ctx1)))
+                              (match cons-result
+                                ((ok cr)
+                                  (let ((s7 (skip-whitespace arena (. (. (. cr ctx) ttl-ctx) state))))
+                                    (let ((s8 (expect-char arena s7 46)))
+                                      (match s8
+                                        ((ok s9)
+                                          (ok (record-new N3TripleResult
+                                            (triple (record-new N3Triple
+                                              (subject (union-new N3Term n3-formula (. ar formula)))
+                                              (predicate (union-new N3Term n3-rdf (make-iri arena "http://www.w3.org/2000/10/swap/log#implies")))
+                                              (object (union-new N3Term n3-formula (. cr formula)))))
+                                            (ctx (record-new N3ParseContext
+                                              (ttl-ctx (record-new TtlParseContext
+                                                (prefixes (. (. (. cr ctx) ttl-ctx) prefixes))
+                                                (base-iri (. (. (. cr ctx) ttl-ctx) base-iri))
+                                                (blank-counter (. (. (. cr ctx) ttl-ctx) blank-counter))
+                                                (state s9)))
+                                              (formula-counter (. (. cr ctx) formula-counter))
+                                              (in-formula (. (. cr ctx) in-formula))
+                                              (current-formula-id (. (. cr ctx) current-formula-id)))))))
+                                        ((error e) (error e))))))
+                                ((error e) (error e)))))))
+                      ((error e) (error e)))))
+                ((error e) (error e))))))
+        ((error e) (error e)))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Built-in predicates
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-builtin-iri ((in arena Arena) (in local-name String))
+    (@intent "Create IRI for N3 built-in predicate in log: namespace")
+    (@spec ((Arena String) -> Term))
+    (@alloc arena)
+    (@example ("implies") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#implies")))
+    (@example ("notIncludes") -> (term-iri (IRI "http://www.w3.org/2000/10/swap/log#notIncludes")))
+    (make-iri arena (string-concat arena "http://www.w3.org/2000/10/swap/log#" local-name)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Main parsing functions
+  ;; ---------------------------------------------------------------------------
+
+  (fn make-n3-graph ((in arena Arena))
+    (@intent "Create an empty N3 graph")
+    (@spec ((Arena) -> N3Graph))
+    (@alloc arena)
+    (@post {$result.size == 0})
+    (@example () -> (N3Graph (list N3Triple) (list Formula) 0))
+    (record-new N3Graph
+      (triples (list-new arena N3Triple))
+      (formulas (list-new arena Formula))
+      (size 0)))
+
+  (fn n3-graph-add-triple ((in arena Arena) (mut g N3Graph) (in t N3Triple))
+    (@intent "Add an N3 triple to the graph")
+    (@spec ((Arena N3Graph N3Triple) -> N3Graph))
+    (@alloc arena)
+    (@post {$result.size >= g.size})
+    (do
+      (list-push (. g triples) t)
+      (record-new N3Graph
+        (triples (. g triples))
+        (formulas (. g formulas))
+        (size (+ (. g size) 1)))))
+
+  (fn n3-graph-add-formula ((in arena Arena) (mut g N3Graph) (in f Formula))
+    (@intent "Register a formula in the graph")
+    (@spec ((Arena N3Graph Formula) -> N3Graph))
+    (@alloc arena)
+    (do
+      (list-push (. g formulas) f)
+      (record-new N3Graph
+        (triples (. g triples))
+        (formulas (. g formulas))
+        (size (. g size)))))
+
+  (fn parse-n3-string ((in arena Arena) (in input String))
+    (@intent "Parse an N3 string into an N3 graph with formulas")
+    (@spec ((Arena String) -> (Result N3Graph ParseError)))
+    (@alloc arena)
+    (@pre {(string-len input) > 0})
+    (@example
+      ("@prefix : <http://example.org/> .\n:s :p :o .")
+      ->
+      (ok (N3Graph (list N3Triple ...) (list Formula) 1)))
+    (@example
+      ("@prefix : <http://example.org/> .\n{ :a :b :c } => { :d :e :f } .")
+      ->
+      (ok (N3Graph (list N3Triple ...) (list Formula ...) 1)))
+    (let ((mut ctx (make-n3-context arena input))
+          (mut g (make-n3-graph arena)))
+      (let ((mut s (skip-whitespace arena (. (. ctx ttl-ctx) state))))
+        (set! ctx (record-new N3ParseContext
+          (ttl-ctx (record-new TtlParseContext
+            (prefixes (. (. ctx ttl-ctx) prefixes))
+            (base-iri (. (. ctx ttl-ctx) base-iri))
+            (blank-counter (. (. ctx ttl-ctx) blank-counter))
+            (state s)))
+          (formula-counter (. ctx formula-counter))
+          (in-formula (. ctx in-formula))
+          (current-formula-id (. ctx current-formula-id))))
+        (while (not (state-at-end (. (. ctx ttl-ctx) state)))
+          (let ((c (state-peek (. (. ctx ttl-ctx) state))))
+            (if (== c 64)
+              (let ((dir-result (parse-directive arena (. ctx ttl-ctx))))
+                (match dir-result
+                  ((ok new-ttl-ctx)
+                    (set! ctx (record-new N3ParseContext
+                      (ttl-ctx new-ttl-ctx)
+                      (formula-counter (. ctx formula-counter))
+                      (in-formula (. ctx in-formula))
+                      (current-formula-id (. ctx current-formula-id)))))
+                  ((error e) (do (return (error e)) ()))))
+              (if (== c 123)
+                ;; Starts with '{' — parse as implication
+                (let ((impl-result (parse-implication arena ctx)))
+                  (match impl-result
+                    ((ok ir)
+                      (do
+                        (set! g (n3-graph-add-triple arena g (. ir triple)))
+                        (set! ctx (. ir ctx))))
+                    ((error e) (do (return (error e)) ()))))
+                ;; Regular triple
+                (let ((triple-result (parse-n3-triple arena ctx)))
+                  (match triple-result
+                    ((ok tr)
+                      (do
+                        (set! g (n3-graph-add-triple arena g (. tr triple)))
+                        (set! ctx (. tr ctx))))
+                    ((error e) (do (return (error e)) ())))))))
+          (let ((s2 (skip-whitespace arena (. (. ctx ttl-ctx) state))))
+            (set! ctx (record-new N3ParseContext
+              (ttl-ctx (record-new TtlParseContext
+                (prefixes (. (. ctx ttl-ctx) prefixes))
+                (base-iri (. (. ctx ttl-ctx) base-iri))
+                (blank-counter (. (. ctx ttl-ctx) blank-counter))
+                (state s2)))
+              (formula-counter (. ctx formula-counter))
+              (in-formula (. ctx in-formula))
+              (current-formula-id (. ctx current-formula-id)))))))
+      (ok g)))
+
+  (fn parse-n3-file ((in arena Arena) (in path String))
+    (@intent "Parse an N3 file into an N3 graph")
+    (@spec ((Arena String) -> (Result N3Graph N3FileError)))
+    (@alloc arena)
+    (@pre {(string-len path) > 0})
+    ;; (@example
+    ;;   ("test.n3")
+    ;;   ->
+    ;;   (ok (N3Graph ...)))
+    (let ((f (file-open path 'read)))
+      (match f
+        ((ok handle)
+          (let ((content (file-read-all arena (addr handle))))
+            (match content
+              ((ok text)
+                (do
+                  (file-close (addr handle))
+                  (match (parse-n3-string arena text)
+                    ((ok g) (ok g))
+                    ((error e) (error (union-new N3FileError n3-parse-error e))))))
+              ((error e)
+                (do
+                  (file-close (addr handle))
+                  (error (union-new N3FileError n3-file-error e)))))))
+        ((error e) (error (union-new N3FileError n3-file-error e))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Conversion to standard RDF
+  ;; ---------------------------------------------------------------------------
+
+  (fn n3-to-rdf-graph ((in arena Arena) (in n3g N3Graph))
+    (@intent "Convert N3 graph to standard RDF graph, flattening formulas to blank nodes")
+    (@spec ((Arena N3Graph) -> Graph))
+    (@alloc arena)
+    (let ((mut g (make-graph arena)))
+      (for-each (t (. n3g triples))
+        (let ((s (match (. t subject)
+                   ((n3-rdf term) term)
+                   ((n3-formula f) (make-blank arena (cast BlankNodeId (. f id))))
+                   ((n3-quick-var qv) (make-blank arena 0))))
+              (p (match (. t predicate)
+                   ((n3-rdf term) term)
+                   ((n3-formula f) (make-blank arena (cast BlankNodeId (. f id))))
+                   ((n3-quick-var qv) (make-blank arena 0))))
+              (o (match (. t object)
+                   ((n3-rdf term) term)
+                   ((n3-formula f) (make-blank arena (cast BlankNodeId (. f id))))
+                   ((n3-quick-var qv) (make-blank arena 0)))))
+          (set! g (graph-add arena g (make-triple arena s p o)))))
+      g)))
+
