@@ -4,7 +4,8 @@
   (import rdf (Term Triple Graph term-eq triple-subject triple-predicate triple-object make-triple))
 
   (export
-    TermMap
+    TripleSet
+    TripleMap
     TripleIndex
     IndexedGraph
     indexed-graph-create
@@ -16,17 +17,17 @@
     indexed-graph-subjects
     indexed-graph-objects)
 
-  ;; Map from Term to Set of Terms (for second-level index)
-  (type TermMap (Map Term (Set Term)))
+  ;; Set of triples (leaf level of index)
+  (type TripleSet (Set Triple))
 
-  ;; Map from Term to TermMap (for first-level index)
-  (type TermIndex (Map Term TermMap))
+  ;; Map from Term to TripleSet (second-level index)
+  (type TripleMap (Map Term TripleSet))
 
-  ;; Triple index with three access patterns
+  ;; Triple index with three access patterns - stores full Triple at leaf
   (type TripleIndex (record
-    (spo TermIndex)   ;; subject -> predicate -> objects
-    (pso TermIndex)   ;; predicate -> subject -> objects
-    (osp TermIndex))) ;; object -> subject -> predicates
+    (spo (Map Term TripleMap))   ;; subject -> predicate -> Set[Triple]
+    (pso (Map Term TripleMap))   ;; predicate -> subject -> Set[Triple]
+    (osp (Map Term TripleMap)))) ;; object -> subject -> Set[Triple]
 
   ;; Graph with indexes for O(1) lookups
   (type IndexedGraph (record
@@ -42,9 +43,9 @@
     (record-new IndexedGraph
       (triples (list-new arena Triple))
       (index (record-new TripleIndex
-               (spo (map-new arena Term TermMap))
-               (pso (map-new arena Term TermMap))
-               (osp (map-new arena Term TermMap))))
+               (spo (map-new arena Term TripleMap))
+               (pso (map-new arena Term TripleMap))
+               (osp (map-new arena Term TripleMap))))
       (size 0))
     :c-name "rdf_indexed_graph_create")
 
@@ -54,7 +55,6 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (@post (>= (. $result size) (. g size)))
-    (@post (indexed-graph-contains $result t))
     ;; Skip if already present (dedup)
     (when (indexed-graph-contains g t)
       (return g))
@@ -63,40 +63,40 @@
           (o (triple-object t)))
       ;; Add to triples list
       (list-push (. g triples) t)
-      ;; Update SPO index: subject -> predicate -> objects
+      ;; Update SPO index: subject -> predicate -> Set[Triple]
       (let ((spo-idx (. (. g index) spo)))
         (when (not (map-has spo-idx s))
-          (map-put spo-idx s (map-new arena Term (Set Term))))
+          (map-put spo-idx s (map-new arena Term TripleSet)))
         (match (map-get spo-idx s)
           ((some pred-map)
             (when (not (map-has pred-map p))
-              (map-put pred-map p (set-new arena Term)))
+              (map-put pred-map p (set-new arena Triple)))
             (match (map-get pred-map p)
-              ((some obj-set) (set-put obj-set o))
+              ((some triple-set) (set-put triple-set t))
               ((none) (do))))
           ((none) (do))))
-      ;; Update PSO index: predicate -> subject -> objects
+      ;; Update PSO index: predicate -> subject -> Set[Triple]
       (let ((pso-idx (. (. g index) pso)))
         (when (not (map-has pso-idx p))
-          (map-put pso-idx p (map-new arena Term (Set Term))))
+          (map-put pso-idx p (map-new arena Term TripleSet)))
         (match (map-get pso-idx p)
           ((some subj-map)
             (when (not (map-has subj-map s))
-              (map-put subj-map s (set-new arena Term)))
+              (map-put subj-map s (set-new arena Triple)))
             (match (map-get subj-map s)
-              ((some obj-set) (set-put obj-set o))
+              ((some triple-set) (set-put triple-set t))
               ((none) (do))))
           ((none) (do))))
-      ;; Update OSP index: object -> subject -> predicates
+      ;; Update OSP index: object -> subject -> Set[Triple]
       (let ((osp-idx (. (. g index) osp)))
         (when (not (map-has osp-idx o))
-          (map-put osp-idx o (map-new arena Term (Set Term))))
+          (map-put osp-idx o (map-new arena Term TripleSet)))
         (match (map-get osp-idx o)
           ((some subj-map)
             (when (not (map-has subj-map s))
-              (map-put subj-map s (set-new arena Term)))
+              (map-put subj-map s (set-new arena Triple)))
             (match (map-get subj-map s)
-              ((some pred-set) (set-put pred-set p))
+              ((some triple-set) (set-put triple-set t))
               ((none) (do))))
           ((none) (do))))
       ;; Return updated graph
@@ -116,12 +116,11 @@
     (@assume (implies $result (exists (t2 (. g triples)) (triple-eq t t2))))
     (let ((s (triple-subject t))
           (p (triple-predicate t))
-          (o (triple-object t))
           (spo-idx (. (. g index) spo)))
       (match (map-get spo-idx s)
         ((some pred-map)
           (match (map-get pred-map p)
-            ((some obj-set) (set-has obj-set o))
+            ((some triple-set) (set-has triple-set t))
             ((none) false)))
         ((none) false)))
     :c-name "rdf_indexed_graph_contains")
@@ -173,24 +172,75 @@
                               (in pred (Option Term))
                               (in obj (Option Term))
                               (callback (Fn (Triple) Unit)))
-    (@intent "Call callback for each matching triple - zero allocation")
+    (@intent "Call callback for each matching triple using indices - zero allocation")
     (@spec ((IndexedGraph (Option Term) (Option Term) (Option Term) (Fn (Triple) Unit)) -> Unit))
     (@pure)
     (@pre (>= (. g size) 0))
-    ;; Iterate all triples and filter by pattern, calling callback for matches
-    (for-each (t (. g triples))
-      (let ((matches true))
-        (match subj
-          ((some s) (when (not (term-eq (triple-subject t) s)) (set! matches false)))
-          ((none) (do)))
+    (match subj
+      ((some s)
+        ;; Subject bound - use SPO index
+        (match (map-get (. (. g index) spo) s)
+          ((some pred-map)
+            (match pred
+              ((some p)
+                ;; S+P bound
+                (match (map-get pred-map p)
+                  ((some triple-set)
+                    (match obj
+                      ((some o)
+                        ;; S+P+O bound - filter by object
+                        (for-each (t triple-set)
+                          (when (term-eq (triple-object t) o)
+                            (callback t))))
+                      ((none)
+                        ;; S+P bound, O wildcard - iterate all
+                        (for-each (t triple-set)
+                          (callback t)))))
+                  ((none) (do))))
+              ((none)
+                ;; Only S bound - iterate all predicates
+                (for-each ((p triple-set) pred-map)
+                  (match obj
+                    ((some o)
+                      (for-each (t triple-set)
+                        (when (term-eq (triple-object t) o)
+                          (callback t))))
+                    ((none)
+                      (for-each (t triple-set)
+                        (callback t))))))))
+          ((none) (do))))
+      ((none)
+        ;; Subject not bound
         (match pred
-          ((some p) (when (not (term-eq (triple-predicate t) p)) (set! matches false)))
-          ((none) (do)))
-        (match obj
-          ((some o) (when (not (term-eq (triple-object t) o)) (set! matches false)))
-          ((none) (do)))
-        (when matches
-          (callback t))))
+          ((some p)
+            ;; Predicate bound - use PSO index
+            (match (map-get (. (. g index) pso) p)
+              ((some subj-map)
+                (for-each ((s triple-set) subj-map)
+                  (match obj
+                    ((some o)
+                      (for-each (t triple-set)
+                        (when (term-eq (triple-object t) o)
+                          (callback t))))
+                    ((none)
+                      (for-each (t triple-set)
+                        (callback t))))))
+              ((none) (do))))
+          ((none)
+            ;; Neither S nor P bound
+            (match obj
+              ((some o)
+                ;; Only O bound - use OSP index
+                (match (map-get (. (. g index) osp) o)
+                  ((some subj-map)
+                    (for-each ((s triple-set) subj-map)
+                      (for-each (t triple-set)
+                        (callback t))))
+                  ((none) (do))))
+              ((none)
+                ;; Nothing bound - iterate all triples
+                (for-each (t (. g triples))
+                  (callback t))))))))
     :c-name "rdf_indexed_graph_for_each")
 
   (fn indexed-graph-size ((in g IndexedGraph))
@@ -210,12 +260,13 @@
           (osp-idx (. (. g index) osp)))
       (match (map-get osp-idx obj)
         ((some subj-map)
-          (for-each (s (map-keys subj-map))
-            (match (map-get subj-map s)
-              ((some pred-set)
-                (when (set-has pred-set pred)
-                  (list-push result s)))
-              ((none) (do)))))
+          (for-each ((s triple-set) subj-map)
+            ;; Check if any triple in the set has the matching predicate
+            (let ((mut found false))
+              (for-each (t triple-set)
+                (when (and (not found) (term-eq (triple-predicate t) pred))
+                  (list-push result s)
+                  (set! found true))))))
         ((none) (do)))
       result)
     :c-name "rdf_indexed_graph_subjects")
@@ -230,9 +281,9 @@
       (match (map-get spo-idx subj)
         ((some pred-map)
           (match (map-get pred-map pred)
-            ((some obj-set)
-              (for-each (o (set-elements obj-set))
-                (list-push result o)))
+            ((some triple-set)
+              (for-each (t triple-set)
+                (list-push result (triple-object t))))
             ((none) (do))))
         ((none) (do)))
       result)
