@@ -148,22 +148,73 @@
     (@assume (implies (and (== subj (none)) (== pred (none)) (== obj (none)))
                (forall (t (. g triples))
                  (exists (t2 $result) (triple-eq t t2)))))
-    ;; Simple filtering approach - iterate existing triples, no allocation of new Triple objects
-    ;; Trade O(1) index lookup for zero memory allocation per query
+    ;; Use index-based dispatch for O(1) lookup instead of full scan
     (let ((mut result (list-new arena Triple)))
-      (for-each (t (. g triples))
-        (let ((matches true))
-          (match subj
-            ((some s) (when (not (term-eq (triple-subject t) s)) (set! matches false)))
-            ((none) (do)))
+      (match subj
+        ((some s)
+          ;; Subject bound - use SPO index
+          (match (map-get (. (. g index) spo) s)
+            ((some pred-map)
+              (match pred
+                ((some p)
+                  ;; S+P bound
+                  (match (map-get pred-map p)
+                    ((some triple-set)
+                      (match obj
+                        ((some o)
+                          ;; S+P+O bound
+                          (for-each (t triple-set)
+                            (when (term-eq (triple-object t) o)
+                              (list-push result t))))
+                        ((none)
+                          ;; S+P bound, O wildcard
+                          (for-each (t triple-set)
+                            (list-push result t)))))
+                    ((none) (do))))
+                ((none)
+                  ;; Only S bound
+                  (for-each ((p triple-set) pred-map)
+                    (match obj
+                      ((some o)
+                        (for-each (t triple-set)
+                          (when (term-eq (triple-object t) o)
+                            (list-push result t))))
+                      ((none)
+                        (for-each (t triple-set)
+                          (list-push result t))))))))
+            ((none) (do))))
+        ((none)
+          ;; Subject not bound
           (match pred
-            ((some p) (when (not (term-eq (triple-predicate t) p)) (set! matches false)))
-            ((none) (do)))
-          (match obj
-            ((some o) (when (not (term-eq (triple-object t) o)) (set! matches false)))
-            ((none) (do)))
-          (when matches
-            (list-push result t))))
+            ((some p)
+              ;; Predicate bound - use PSO index
+              (match (map-get (. (. g index) pso) p)
+                ((some subj-map)
+                  (for-each ((s triple-set) subj-map)
+                    (match obj
+                      ((some o)
+                        (for-each (t triple-set)
+                          (when (term-eq (triple-object t) o)
+                            (list-push result t))))
+                      ((none)
+                        (for-each (t triple-set)
+                          (list-push result t))))))
+                ((none) (do))))
+            ((none)
+              ;; Neither S nor P bound
+              (match obj
+                ((some o)
+                  ;; Only O bound - use OSP index
+                  (match (map-get (. (. g index) osp) o)
+                    ((some subj-map)
+                      (for-each ((s triple-set) subj-map)
+                        (for-each (t triple-set)
+                          (list-push result t))))
+                    ((none) (do))))
+                ((none)
+                  ;; Nothing bound - iterate all triples
+                  (for-each (t (. g triples))
+                    (list-push result t))))))))
       result)
     :c-name "rdf_indexed_graph_match")
 
