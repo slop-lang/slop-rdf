@@ -8,6 +8,7 @@
     Literal
     Triple
     Graph
+    GraphSize
     make-iri
     make-blank
     make-literal
@@ -20,6 +21,7 @@
     triple-eq
     make-graph
     graph-add
+    graph-add-unchecked
     graph-remove
     graph-size
     graph-contains
@@ -281,6 +283,16 @@
         (size (cast GraphSize (+ (. g size) 1)))))
     :c-name
     "rdf_graph_add")
+
+  (fn graph-add-unchecked ((in arena Arena) (in g Graph) (in t Triple))
+    (@intent "Add a triple to the graph without duplicate checking")
+    (@spec ((Arena Graph Triple) -> Graph))
+    (@alloc arena)
+    (@post (== (graph-size $result) (+ (graph-size g) 1)))
+    (record-new Graph
+      (triples (do (list-push (. g triples) t) (. g triples)))
+      (size (cast GraphSize (+ (. g size) 1))))
+    :c-name "rdf_graph_add_unchecked")
 
   (fn graph-remove ((in arena Arena) (in g Graph) (in t Triple))
     (@intent "Remove a triple from the graph if present")

@@ -22,7 +22,7 @@
     parse-triple
     parse-directive)
 
-  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add))
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add-unchecked))
   (import common (ParseState ParseError ParseErrorKind Position ParseWhileResult make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
   (import file (file-open file-read-all file-close FileMode FileError))
   (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum))
@@ -939,13 +939,13 @@
                     ((ok sr)
                       (do
                         (for-each (t (. sr extra-triples))
-                          (set! g (graph-add arena g t)))
+                          (set! g (graph-add-unchecked arena g t)))
                         (let ((pol-result (parse-predicate-object-list arena (. sr ctx) (. sr term))))
                           (match pol-result
                             ((ok polr)
                               (do
                                 (for-each (t (. polr triples))
-                                  (set! g (graph-add arena g t)))
+                                  (set! g (graph-add-unchecked arena g t)))
                                 (let ((s3 (skip-whitespace arena (. (. polr ctx) state))))
                                   (let ((s4 (expect-char arena s3 46)))
                                     (match s4

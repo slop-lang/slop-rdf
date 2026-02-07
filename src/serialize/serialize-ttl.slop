@@ -7,6 +7,7 @@
     TtlFileError
     serialize-ttl-string
     serialize-ttl-file
+    serialize-ttl-stream
     serialize-term
     serialize-iri
     serialize-literal
@@ -17,8 +18,11 @@
   (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-graph graph-add graph-size graph-contains term-eq))
   (import ttl (PrefixMap PrefixBinding is-pn-chars is-pn-chars-base prefix-map-lookup))
   (import vocab (XSD_NS XSD_STRING XSD_BOOLEAN XSD_INTEGER XSD_DECIMAL XSD_DOUBLE))
-  (import file (file-open file-close file-write-line FileMode FileError))
+  (import file (file-open file-close file-write-line File FileMode FileError))
   (import strlib (starts-with substring char-at is-digit is-alpha))
+
+  (ffi "stdio.h"
+    (fwrite ((buf (Ptr Void)) (size U64) (count U64) (file (Ptr Void))) U64))
 
   ;; ---------------------------------------------------------------------------
   ;; Types
@@ -65,19 +69,35 @@
       ((== c 34) "\\\"")
       (else (string-push-char arena "" c))))
 
+  (fn needs-escaping ((in s String))
+    (@intent "Check if string contains characters that need Turtle escaping")
+    (@spec ((String) -> Bool))
+    (@pure)
+    (let ((len (string-len s))
+          (mut found false)
+          (mut i 0))
+      (while (and (< i len) (not found))
+        (let ((c (char-at s i)))
+          (when (or (== c 10) (or (== c 13) (or (== c 9) (or (== c 92) (== c 34)))))
+            (set! found true))
+          (set! i (+ i 1))))
+      found))
+
   (fn escape-string ((in arena Arena) (in s String))
     (@intent "Escape all special characters in a string for Turtle output")
     (@spec ((Arena String) -> String))
     (@alloc arena)
     (@post (>= (string-len $result) 0))
-    (let ((len (string-len s))
-          (mut result ""))
-      (let ((mut i 0))
-        (while (< i len)
-          (let ((c (char-at s i)))
-            (set! result (string-concat arena result (escape-string-char arena c)))
-            (set! i (+ i 1)))))
-      result))
+    (if (not (needs-escaping s))
+      s
+      (let ((len (string-len s))
+            (mut result ""))
+        (let ((mut i 0))
+          (while (< i len)
+            (let ((c (char-at s i)))
+              (set! result (string-concat arena result (escape-string-char arena c)))
+              (set! i (+ i 1)))))
+        result)))
 
   (fn string-contains-newline ((in s String))
     (@intent "Check if string contains newline characters")
@@ -459,4 +479,80 @@
               (file-write-line (addr handle) content)
               (file-close (addr handle))
               (ok true)))
-          ((error e) (error (union-new TtlFileError file-error e))))))))
+          ((error e) (error (union-new TtlFileError file-error e)))))))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Streaming serializer — O(n) arena usage
+  ;; ---------------------------------------------------------------------------
+
+  (fn emit-str ((handle (Ptr Void)) (s String))
+    (@intent "Write string to FILE* handle")
+    (@spec (((Ptr Void) String) -> Unit))
+    (fwrite (cast (Ptr Void) (. s data)) (cast U64 1) (cast U64 (. s len)) handle)
+    (do))
+
+  (fn serialize-ttl-stream ((in arena Arena) (in g Graph) (in config SerializeConfig) (in path String))
+    (@intent "Serialize graph to TTL file using streaming writes — O(n) arena")
+    (@spec ((Arena Graph SerializeConfig String) -> (Result Bool TtlFileError)))
+    (@alloc arena)
+    (@pre (> (string-len path) 0))
+    (let ((f (file-open path 'write)))
+      (match f
+        ((ok handle)
+          (let ((fp (cast (Ptr Void) (. handle handle)))
+                (prefixes (. config prefixes))
+                (base (. config base-iri))
+                (indent (make-indent arena (. config indent-width))))
+            ;; Emit base declaration
+            (let ((base-str (serialize-base arena base)))
+              (when (> (string-len base-str) 0)
+                (emit-str fp base-str)))
+            ;; Emit prefix declarations
+            (let ((prefix-str (serialize-prefixes arena prefixes)))
+              (when (> (string-len prefix-str) 0)
+                (emit-str fp prefix-str)
+                (emit-str fp "\n")))
+            ;; Emit triples with subject/predicate grouping
+            (let ((mut prev-subj Term (make-blank arena 2147483647))
+                  (mut prev-pred Term (make-blank arena 2147483647))
+                  (mut first-triple true))
+              (for-each (triple (. g triples))
+                (with-arena 4096
+                  (let ((subj-str (serialize-term arena (. triple subject) prefixes))
+                        (pred-str (serialize-term arena (. triple predicate) prefixes))
+                        (obj-str (serialize-term arena (. triple object) prefixes)))
+                    (cond
+                      ;; First triple
+                      (first-triple
+                        (emit-str fp subj-str)
+                        (emit-str fp " ")
+                        (emit-str fp pred-str)
+                        (emit-str fp " ")
+                        (emit-str fp obj-str)
+                        (set! first-triple false))
+                      ;; Same subject, same predicate — use ,
+                      ((and (term-eq (. triple subject) prev-subj) (term-eq (. triple predicate) prev-pred))
+                        (emit-str fp ", ")
+                        (emit-str fp obj-str))
+                      ;; Same subject, different predicate — use ;
+                      ((term-eq (. triple subject) prev-subj)
+                        (emit-str fp " ;\n")
+                        (emit-str fp indent)
+                        (emit-str fp pred-str)
+                        (emit-str fp " ")
+                        (emit-str fp obj-str))
+                      ;; Different subject — close previous, start new
+                      (else
+                        (emit-str fp " .\n")
+                        (emit-str fp subj-str)
+                        (emit-str fp " ")
+                        (emit-str fp pred-str)
+                        (emit-str fp " ")
+                        (emit-str fp obj-str)))))
+                (set! prev-subj (. triple subject))
+                (set! prev-pred (. triple predicate)))
+              (when (not first-triple)
+                (emit-str fp " .\n")))
+            (file-close (addr handle))
+            (ok true)))
+        ((error e) (error (union-new TtlFileError file-error e)))))))
