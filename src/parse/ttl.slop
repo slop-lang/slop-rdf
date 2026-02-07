@@ -182,6 +182,32 @@
                 (state (. res state)))))))
           ((error e) (error e))))))
 
+  (fn parse-pn-local ((in arena Arena) (in state ParseState))
+    (@intent "Parse local part of prefixed name, allowing dots that aren't the last char")
+    (@spec ((Arena ParseState) -> ParseWhileResult))
+    (@alloc arena)
+    ;; Parse initial pn-chars segment
+    (let ((mut result (parse-while arena state is-pn-chars))
+          (mut done false))
+      ;; If next char is '.', check if followed by pn-chars — if so, continue
+      (while (not done)
+        (let ((c (state-peek (. result state))))
+          (if (== c 46)
+            ;; dot — check if followed by a pn-char (not end of name)
+            (let ((c2 (state-peek-n (. result state) 1)))
+              (if (is-pn-chars c2)
+                ;; dot followed by valid name char — consume dot + next segment
+                (let ((after-dot (state-advance arena (. result state))))
+                  (let ((next-seg (parse-while arena after-dot is-pn-chars)))
+                    (set! result (record-new ParseWhileResult
+                      (result (string-concat arena (string-concat arena (. result result) ".") (. next-seg result)))
+                      (state (. next-seg state))))))
+                ;; dot at end — stop (don't consume the dot)
+                (set! done true)))
+            ;; non-dot — stop
+            (set! done true))))
+      result))
+
   (fn parse-prefixed-name ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a prefixed name (prefix:localname) and expand to full IRI")
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
@@ -194,7 +220,8 @@
       (let ((s1 (expect-char arena (. prefix-result state) 58)))
         (match s1
           ((ok s2)
-            (let ((local-result (parse-while arena s2 is-pn-chars)))
+            ;; Parse local part: pn-chars with embedded dots (dots allowed except as last char)
+            (let ((local-result (parse-pn-local arena s2)))
               (let ((lookup (prefix-map-lookup (. ctx prefixes) (. prefix-result result))))
                 (match lookup
                   ((some base-iri)
@@ -582,8 +609,43 @@
         ((or (== c 34) (== c 39)) (parse-literal arena ctx))
         ((or (and (>= c 48) (<= c 57)) (or (== c 43) (== c 45)))
           (parse-numeric-literal arena ctx))
-        ((or (== c 116) (== c 102))
-          (parse-boolean-literal arena ctx))
+        ((== c 116)
+          ;; 't' — could be 'true' boolean or a prefixed name like 'tag:'
+          ;; Check for exact match: t(114)r(117)u(101)e followed by non-name char
+          (let ((c2 (state-peek-n (. ctx state) 1))
+                (c3 (state-peek-n (. ctx state) 2))
+                (c4 (state-peek-n (. ctx state) 3))
+                (c5 (state-peek-n (. ctx state) 4)))
+            (if (and (== c2 114) (and (== c3 117) (and (== c4 101)
+                  (not (or (is-alnum c5) (or (== c5 58) (or (== c5 95) (== c5 45))))))))
+              ;; 'true' followed by delimiter — boolean literal
+              (parse-boolean-literal arena ctx)
+              (parse-prefixed-name arena ctx))))
+        ((== c 102)
+          ;; 'f' — could be 'false' boolean or a prefixed name like 'foaf:'
+          ;; Check for exact match: f(97)a(108)l(115)s(101)e followed by non-name char
+          (let ((c2 (state-peek-n (. ctx state) 1))
+                (c3 (state-peek-n (. ctx state) 2))
+                (c4 (state-peek-n (. ctx state) 3))
+                (c5 (state-peek-n (. ctx state) 4))
+                (c6 (state-peek-n (. ctx state) 5)))
+            (if (and (== c2 97) (and (== c3 108) (and (== c4 115) (and (== c5 101)
+                  (not (or (is-alnum c6) (or (== c6 58) (or (== c6 95) (== c6 45)))))))))
+              ;; 'false' followed by delimiter — boolean literal
+              (parse-boolean-literal arena ctx)
+              (parse-prefixed-name arena ctx))))
+        ;; 'a' followed by whitespace = rdf:type keyword
+        ((== c 97)
+          (let ((c2 (state-peek-n (. ctx state) 1)))
+            (if (or (== c2 32) (or (== c2 9) (or (== c2 10) (== c2 13))))
+              (ok (record-new TermResult
+                (term (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"))
+                (ctx (record-new TtlParseContext
+                  (prefixes (. ctx prefixes))
+                  (base-iri (. ctx base-iri))
+                  (blank-counter (. ctx blank-counter))
+                  (state (state-advance arena (. ctx state)))))))
+              (parse-prefixed-name arena ctx))))
         (else (parse-prefixed-name arena ctx)))))
 
   (fn parse-collection ((in arena Arena) (mut ctx TtlParseContext))
