@@ -3,7 +3,12 @@
 
   (import rdf (Literal))
   (import strlib (parse-int parse-float))
-  (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE))
+  (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE
+                 XSD_LONG XSD_INT XSD_SHORT XSD_BYTE
+                 XSD_NON_NEGATIVE_INTEGER XSD_NON_POSITIVE_INTEGER
+                 XSD_POSITIVE_INTEGER XSD_NEGATIVE_INTEGER
+                 XSD_UNSIGNED_LONG XSD_UNSIGNED_INT XSD_UNSIGNED_SHORT XSD_UNSIGNED_BYTE
+                 RDF_LANG_STRING))
 
   (export
     XsdType
@@ -11,6 +16,7 @@
     XsdError
     xsd-parse-type
     xsd-parse-value
+    xsd-validate-lexical
     xsd-values-equal
     xsd-types-compatible
     literal-values-equal)
@@ -97,6 +103,89 @@
       (xsd-unknown
         (ok (union-new XsdValue xsd-unknown-val lexical))))
     :c-name "xsd_parse_value")
+
+  (fn xsd-validate-lexical ((in lexical String) (in datatype-iri String))
+    (@intent "Validate a lexical form against an XSD datatype IRI")
+    (@spec ((String String) -> Bool))
+    (@pure)
+    ;; Tier 1: core XSD types — delegate to xsd-parse-value
+    (cond
+      ((string-eq datatype-iri XSD_STRING) true)
+      ((string-eq datatype-iri XSD_INTEGER)
+        (match (parse-int lexical)
+          ((ok _) true)
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_BOOLEAN)
+        (or (string-eq lexical "true")
+            (string-eq lexical "false")
+            (string-eq lexical "1")
+            (string-eq lexical "0")))
+      ((string-eq datatype-iri XSD_DECIMAL)
+        (match (parse-float lexical)
+          ((ok _) true)
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_FLOAT)
+        (match (parse-float lexical)
+          ((ok _) true)
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_DOUBLE)
+        (match (parse-float lexical)
+          ((ok _) true)
+          ((error _) false)))
+      ;; Tier 2: integer subtypes — parse-int + range check
+      ((string-eq datatype-iri XSD_LONG)
+        (match (parse-int lexical)
+          ((ok _) true)
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_INT)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v -2147483648) (<= v 2147483647)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_SHORT)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v -32768) (<= v 32767)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_BYTE)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v -128) (<= v 127)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_UNSIGNED_LONG)
+        (match (parse-int lexical)
+          ((ok v) (>= v 0))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_UNSIGNED_INT)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v 0) (<= v 4294967295)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_UNSIGNED_SHORT)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v 0) (<= v 65535)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_UNSIGNED_BYTE)
+        (match (parse-int lexical)
+          ((ok v) (and (>= v 0) (<= v 255)))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_NON_NEGATIVE_INTEGER)
+        (match (parse-int lexical)
+          ((ok v) (>= v 0))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_POSITIVE_INTEGER)
+        (match (parse-int lexical)
+          ((ok v) (>= v 1))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_NEGATIVE_INTEGER)
+        (match (parse-int lexical)
+          ((ok v) (<= v -1))
+          ((error _) false)))
+      ((string-eq datatype-iri XSD_NON_POSITIVE_INTEGER)
+        (match (parse-int lexical)
+          ((ok v) (<= v 0))
+          ((error _) false)))
+      ;; Skip langString — validated by lang tag presence, not lexical form
+      ((string-eq datatype-iri RDF_LANG_STRING) true)
+      ;; Tier 3/4 and unknown types: return true (spec-compliant)
+      (else true))
+    :c-name "xsd_validate_lexical")
 
   (fn xsd-values-equal ((in a XsdValue) (in b XsdValue))
     (@intent "Compare two XSD values for equality in value space")

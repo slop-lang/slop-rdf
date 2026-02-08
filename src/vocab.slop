@@ -5,7 +5,7 @@
     ;; RDF namespace
     RDF_NS RDF_TYPE RDF_FIRST RDF_REST RDF_NIL RDF_PROPERTY
     RDF_STATEMENT RDF_SUBJECT RDF_PREDICATE RDF_OBJECT RDF_LIST
-    RDF_LANG_STRING RDF_HTML RDF_XML_LITERAL
+    RDF_LANG_STRING RDF_HTML RDF_XML_LITERAL RDF_PLAIN_LITERAL
     ;; RDFS namespace
     RDFS_NS RDFS_RESOURCE RDFS_CLASS RDFS_LITERAL RDFS_DATATYPE
     RDFS_SUBCLASS_OF RDFS_SUBPROPERTY_OF RDFS_DOMAIN RDFS_RANGE
@@ -21,7 +21,7 @@
     XSD_G_YEAR XSD_G_MONTH XSD_G_DAY XSD_G_YEAR_MONTH XSD_G_MONTH_DAY
     XSD_DURATION XSD_DAY_TIME_DURATION XSD_YEAR_MONTH_DURATION
     XSD_HEX_BINARY XSD_BASE64_BINARY XSD_ANY_URI
-    XSD_NORMALIZED_STRING XSD_TOKEN XSD_NAME XSD_NCNAME XSD_LANGUAGE
+    XSD_NORMALIZED_STRING XSD_TOKEN XSD_NMTOKEN XSD_NAME XSD_NCNAME XSD_LANGUAGE
     ;; OWL namespace
     OWL_NS OWL_THING OWL_NOTHING OWL_CLASS OWL_NAMED_INDIVIDUAL
     OWL_SAME_AS OWL_DIFFERENT_FROM OWL_ALL_DIFFERENT OWL_DISTINCT_MEMBERS
@@ -42,6 +42,8 @@
     OWL_ASSERTION_PROPERTY OWL_TARGET_INDIVIDUAL OWL_TARGET_VALUE
     OWL_DATATYPE_COMPLEMENT_OF OWL_ON_DATATYPE OWL_WITH_RESTRICTIONS
     OWL_ONTOLOGY OWL_IMPORTS OWL_VERSION_IRI
+    OWL_DEPRECATED OWL_VERSION_INFO OWL_PRIOR_VERSION
+    OWL_BACKWARD_COMPATIBLE_WITH OWL_INCOMPATIBLE_WITH
     ;; DC namespace (Dublin Core Elements)
     DC_NS DC_TITLE DC_CREATOR DC_SUBJECT DC_DESCRIPTION DC_PUBLISHER
     DC_CONTRIBUTOR DC_DATE DC_TYPE DC_FORMAT DC_IDENTIFIER DC_SOURCE
@@ -146,6 +148,7 @@
   (const RDF_LANG_STRING String "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString")
   (const RDF_HTML String "http://www.w3.org/1999/02/22-rdf-syntax-ns#HTML")
   (const RDF_XML_LITERAL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral")
+  (const RDF_PLAIN_LITERAL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral")
 
   ;; ============================================================================
   ;; RDFS Namespace - http://www.w3.org/2000/01/rdf-schema#
@@ -174,6 +177,7 @@
   (const XSD_STRING String "http://www.w3.org/2001/XMLSchema#string")
   (const XSD_NORMALIZED_STRING String "http://www.w3.org/2001/XMLSchema#normalizedString")
   (const XSD_TOKEN String "http://www.w3.org/2001/XMLSchema#token")
+  (const XSD_NMTOKEN String "http://www.w3.org/2001/XMLSchema#NMTOKEN")
   (const XSD_NAME String "http://www.w3.org/2001/XMLSchema#Name")
   (const XSD_NCNAME String "http://www.w3.org/2001/XMLSchema#NCName")
   (const XSD_LANGUAGE String "http://www.w3.org/2001/XMLSchema#language")
@@ -281,6 +285,12 @@
   (const OWL_ONTOLOGY String "http://www.w3.org/2002/07/owl#Ontology")
   (const OWL_IMPORTS String "http://www.w3.org/2002/07/owl#imports")
   (const OWL_VERSION_IRI String "http://www.w3.org/2002/07/owl#versionIRI")
+  ;; Annotation properties (OWL 2 Section 5.5)
+  (const OWL_DEPRECATED String "http://www.w3.org/2002/07/owl#deprecated")
+  (const OWL_VERSION_INFO String "http://www.w3.org/2002/07/owl#versionInfo")
+  (const OWL_PRIOR_VERSION String "http://www.w3.org/2002/07/owl#priorVersion")
+  (const OWL_BACKWARD_COMPATIBLE_WITH String "http://www.w3.org/2002/07/owl#backwardCompatibleWith")
+  (const OWL_INCOMPATIBLE_WITH String "http://www.w3.org/2002/07/owl#incompatibleWith")
 
   ;; ============================================================================
   ;; DC Namespace (Dublin Core Elements) - http://purl.org/dc/elements/1.1/
