@@ -239,6 +239,20 @@
     (@spec ((IndexedGraph (Option Term) (Option Term) (Option Term) (Fn (Triple) Unit)) -> Unit))
     (@pure)
     (@pre (>= (. g size) 0))
+    ;; Callback only receives triples from the graph
+    (@callback-assume callback (indexed-graph-contains g $callback-arg))
+    ;; Callback receives triples matching subject filter
+    (@callback-assume callback
+      (implies (!= subj (none))
+        (term-eq (triple-subject $callback-arg) (unwrap subj))))
+    ;; Callback receives triples matching predicate filter
+    (@callback-assume callback
+      (implies (!= pred (none))
+        (term-eq (triple-predicate $callback-arg) (unwrap pred))))
+    ;; Callback receives triples matching object filter
+    (@callback-assume callback
+      (implies (!= obj (none))
+        (term-eq (triple-object $callback-arg) (unwrap obj))))
     (match subj
       ((some s)
         ;; Subject bound - use SPO index
