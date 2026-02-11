@@ -120,6 +120,7 @@
     SHACL_MIN_COUNT SHACL_MAX_COUNT
     SHACL_MIN_EXCLUSIVE SHACL_MAX_EXCLUSIVE SHACL_MIN_INCLUSIVE SHACL_MAX_INCLUSIVE
     SHACL_MIN_LENGTH SHACL_MAX_LENGTH SHACL_PATTERN SHACL_FLAGS
+    SHACL_LANGUAGE_IN SHACL_UNIQUE_LANG
     SHACL_EQUALS SHACL_DISJOINT SHACL_LESS_THAN SHACL_LESS_THAN_OR_EQUALS
     SHACL_NOT SHACL_AND SHACL_OR SHACL_XONE
     SHACL_NODE SHACL_PROPERTY SHACL_QUALIFIED_VALUE_SHAPE
@@ -609,6 +610,8 @@
   (const SHACL_MAX_LENGTH String "http://www.w3.org/ns/shacl#maxLength")
   (const SHACL_PATTERN String "http://www.w3.org/ns/shacl#pattern")
   (const SHACL_FLAGS String "http://www.w3.org/ns/shacl#flags")
+  (const SHACL_LANGUAGE_IN String "http://www.w3.org/ns/shacl#languageIn")
+  (const SHACL_UNIQUE_LANG String "http://www.w3.org/ns/shacl#uniqueLang")
   ;; Property pair constraints
   (const SHACL_EQUALS String "http://www.w3.org/ns/shacl#equals")
   (const SHACL_DISJOINT String "http://www.w3.org/ns/shacl#disjoint")

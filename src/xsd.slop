@@ -1,7 +1,7 @@
 (module xsd
   (@doc "XSD datatype parsing and value-space equality for RDF literals")
 
-  (import rdf (Literal))
+  (import rdf (Term Literal))
   (import strlib (parse-int parse-float))
   (import vocab (XSD_STRING XSD_INTEGER XSD_BOOLEAN XSD_DECIMAL XSD_FLOAT XSD_DOUBLE
                  XSD_LONG XSD_INT XSD_SHORT XSD_BYTE
@@ -14,12 +14,15 @@
     XsdType
     XsdValue
     XsdError
+    XsdCompareResult
     xsd-parse-type
     xsd-parse-value
     xsd-validate-lexical
     xsd-values-equal
     xsd-types-compatible
-    literal-values-equal)
+    literal-values-equal
+    xsd-values-compare
+    xsd-compare)
 
   ;; Supported XSD types (Phase 1: core types only)
   (type XsdType (enum
@@ -46,6 +49,13 @@
     invalid-lexical-form
     unsupported-datatype
     type-mismatch))
+
+  ;; Comparison result for XSD value ordering
+  (type XsdCompareResult (enum
+    xsd-compare-less
+    xsd-compare-equal
+    xsd-compare-greater
+    xsd-compare-incomparable))
 
   (fn xsd-parse-type ((in datatype-iri String))
     (@intent "Parse XSD datatype IRI to enum, returning xsd-unknown for unrecognized types")
@@ -279,4 +289,95 @@
           (match (. b datatype)
             ((some dt-b) (ok false))
             ((none) (ok (string-eq (. a value) (. b value)))))))))
-    :c-name "xsd_literal_values_equal"))
+    :c-name "xsd_literal_values_equal")
+
+  ;; ============================================================
+  ;; XSD Value Comparison (ordering)
+  ;; ============================================================
+
+  (fn float-cmp ((in a Float) (in b Float))
+    (@intent "Compare two floats, returning ordering")
+    (@spec ((Float Float) -> XsdCompareResult))
+    (@pure)
+    (if (< a b) 'xsd-compare-less
+      (if (> a b) 'xsd-compare-greater
+        'xsd-compare-equal))
+    :c-name "xsd_float_cmp")
+
+  (fn xsd-values-compare ((in a XsdValue) (in b XsdValue))
+    (@intent "Compare two XSD values, returning ordering")
+    (@spec ((XsdValue XsdValue) -> XsdCompareResult))
+    (@pure)
+    (match a
+      ((xsd-integer-val i1)
+        (let ((d1 (cast Float i1)))
+          (match b
+            ((xsd-integer-val i2) (float-cmp d1 (cast Float i2)))
+            ((xsd-decimal-val d2) (float-cmp d1 d2))
+            ((xsd-float-val f2) (float-cmp d1 (cast Float f2)))
+            ((xsd-double-val d2) (float-cmp d1 d2))
+            (_ 'xsd-compare-incomparable))))
+      ((xsd-decimal-val d1)
+        (match b
+          ((xsd-integer-val i2) (float-cmp d1 (cast Float i2)))
+          ((xsd-decimal-val d2) (float-cmp d1 d2))
+          ((xsd-float-val f2) (float-cmp d1 (cast Float f2)))
+          ((xsd-double-val d2) (float-cmp d1 d2))
+          (_ 'xsd-compare-incomparable)))
+      ((xsd-float-val f1)
+        (let ((d1 (cast Float f1)))
+          (match b
+            ((xsd-integer-val i2) (float-cmp d1 (cast Float i2)))
+            ((xsd-decimal-val d2) (float-cmp d1 d2))
+            ((xsd-float-val f2) (float-cmp d1 (cast Float f2)))
+            ((xsd-double-val d2) (float-cmp d1 d2))
+            (_ 'xsd-compare-incomparable))))
+      ((xsd-double-val d1)
+        (match b
+          ((xsd-integer-val i2) (float-cmp d1 (cast Float i2)))
+          ((xsd-decimal-val d2) (float-cmp d1 d2))
+          ((xsd-float-val f2) (float-cmp d1 (cast Float f2)))
+          ((xsd-double-val d2) (float-cmp d1 d2))
+          (_ 'xsd-compare-incomparable)))
+      ((xsd-string-val s1)
+        (match b
+          ((xsd-string-val s2)
+            (if (string-eq s1 s2) 'xsd-compare-equal 'xsd-compare-incomparable))
+          (_ 'xsd-compare-incomparable)))
+      ((xsd-boolean-val b1)
+        (match b
+          ((xsd-boolean-val b2)
+            (if (== b1 b2) 'xsd-compare-equal
+              (if b2 'xsd-compare-less 'xsd-compare-greater)))
+          (_ 'xsd-compare-incomparable)))
+      ((xsd-unknown-val _)
+        'xsd-compare-incomparable))
+    :c-name "xsd_values_compare")
+
+  (fn xsd-compare ((arena Arena) (a Term) (b Term))
+    (@intent "Compare two RDF terms using XSD value-space ordering")
+    (@spec ((Arena Term Term) -> XsdCompareResult))
+    (@alloc arena)
+    (match a
+      ((term-literal lit-a)
+        (match b
+          ((term-literal lit-b)
+            (let ((dt-a (match (. lit-a datatype)
+                          ((some d) d)
+                          ((none) XSD_STRING)))
+                  (dt-b (match (. lit-b datatype)
+                          ((some d) d)
+                          ((none) XSD_STRING))))
+              (let ((type-a (xsd-parse-type dt-a))
+                    (type-b (xsd-parse-type dt-b)))
+                (if (not (xsd-types-compatible type-a type-b))
+                  'xsd-compare-incomparable
+                  (match (xsd-parse-value arena (. lit-a value) type-a)
+                    ((ok val-a)
+                      (match (xsd-parse-value arena (. lit-b value) type-b)
+                        ((ok val-b) (xsd-values-compare val-a val-b))
+                        ((error _) 'xsd-compare-incomparable)))
+                    ((error _) 'xsd-compare-incomparable))))))
+          (_ 'xsd-compare-incomparable)))
+      (_ 'xsd-compare-incomparable))
+    :c-name "xsd_compare"))
