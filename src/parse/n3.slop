@@ -186,7 +186,7 @@
     (@alloc arena)
     (@pre {(state-peek ctx.ttl-ctx.state) == 63})
     (@example
-      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext _ _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
       ->
       (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
     (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
@@ -197,6 +197,7 @@
             (ttl-ctx (record-new TtlParseContext
               (prefixes (. (. ctx ttl-ctx) prefixes))
               (base-iri (. (. ctx ttl-ctx) base-iri))
+              (blank-labels (. (. ctx ttl-ctx) blank-labels))
               (blank-counter (. (. ctx ttl-ctx) blank-counter))
               (state (. name-result state))))
             (formula-counter (. ctx formula-counter))
@@ -213,7 +214,7 @@
     (@alloc arena)
     (@pre {(state-peek ctx.ttl-ctx.state) == 123})
     (@example
-      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ (ParseState "{ :s :p :o }" 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ _ (ParseState "{ :s :p :o }" 0 1 1)) 0 false (none)))
       ->
       (ok (record (formula (Formula 0 (Graph ...))) (ctx ...))))
     (let ((s1 (state-advance arena (. (. ctx ttl-ctx) state))))
@@ -221,6 +222,7 @@
               (ttl-ctx (record-new TtlParseContext
                 (prefixes (. (. ctx ttl-ctx) prefixes))
                 (base-iri (. (. ctx ttl-ctx) base-iri))
+                (blank-labels (. (. ctx ttl-ctx) blank-labels))
                 (blank-counter (. (. ctx ttl-ctx) blank-counter))
                 (state s1)))
               (formula-counter (. ctx formula-counter))
@@ -236,6 +238,7 @@
                   (ttl-ctx (record-new TtlParseContext
                     (prefixes (. (. cur-ctx ttl-ctx) prefixes))
                     (base-iri (. (. cur-ctx ttl-ctx) base-iri))
+                    (blank-labels (. (. cur-ctx ttl-ctx) blank-labels))
                     (blank-counter (. (. cur-ctx ttl-ctx) blank-counter))
                     (state s)))
                   (formula-counter (. cur-ctx formula-counter))
@@ -252,6 +255,7 @@
                               (ttl-ctx (record-new TtlParseContext
                                 (prefixes (. (. cur-ctx ttl-ctx) prefixes))
                                 (base-iri (. (. cur-ctx ttl-ctx) base-iri))
+                                (blank-labels (. (. cur-ctx ttl-ctx) blank-labels))
                                 (blank-counter (. (. cur-ctx ttl-ctx) blank-counter))
                                 (state s2)))
                               (formula-counter (. cur-ctx formula-counter))
@@ -267,6 +271,7 @@
                         (ttl-ctx (record-new TtlParseContext
                           (prefixes (. (. ctx3 ttl-ctx) prefixes))
                           (base-iri (. (. ctx3 ttl-ctx) base-iri))
+                          (blank-labels (. (. ctx3 ttl-ctx) blank-labels))
                           (blank-counter (. (. ctx3 ttl-ctx) blank-counter))
                           (state s3)))
                         (formula-counter (. ctx3 formula-counter))
@@ -291,6 +296,7 @@
                 (ttl-ctx (record-new TtlParseContext
                   (prefixes (. (. ctx ttl-ctx) prefixes))
                   (base-iri (. (. ctx ttl-ctx) base-iri))
+                  (blank-labels (. (. ctx ttl-ctx) blank-labels))
                   (blank-counter (. (. ctx ttl-ctx) blank-counter))
                   (state s1)))
                 (formula-counter (. ctx formula-counter))
@@ -313,11 +319,11 @@
     (@spec ((Arena N3ParseContext) -> (Result N3TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "<http://example.org/>" 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext _ _ _ _ (ParseState "<http://example.org/>" 0 1 1)) 0 false (none)))
       ->
       (ok (record (term (n3-rdf (term-iri (IRI "http://example.org/")))) (ctx ...))))
     (@example
-      ((N3ParseContext (TtlParseContext _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext _ _ _ _ (ParseState "?x" 0 1 1)) 0 false (none)))
       ->
       (ok (record (term (n3-quick-var (QuickVar "x"))) (ctx ...))))
     (let ((c (state-peek (. (. ctx ttl-ctx) state))))
@@ -357,7 +363,7 @@
     (@spec ((Arena N3ParseContext) -> (Result N3TripleResult ParseError)))
     (@alloc arena)
     (@example
-      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ 0 (ParseState ":s :p :o ." 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ 0 (ParseState ":s :p :o ." 0 1 1)) 0 false (none)))
       ->
       (ok (record (triple (N3Triple ...)) (ctx ...))))
     (let ((sub-result (parse-n3-term arena ctx)))
@@ -368,6 +374,7 @@
                     (ttl-ctx (record-new TtlParseContext
                       (prefixes (. (. (. sr ctx) ttl-ctx) prefixes))
                       (base-iri (. (. (. sr ctx) ttl-ctx) base-iri))
+                      (blank-labels (. (. (. sr ctx) ttl-ctx) blank-labels))
                       (blank-counter (. (. (. sr ctx) ttl-ctx) blank-counter))
                       (state s1)))
                     (formula-counter (. (. sr ctx) formula-counter))
@@ -381,6 +388,7 @@
                               (ttl-ctx (record-new TtlParseContext
                                 (prefixes (. (. (. pr ctx) ttl-ctx) prefixes))
                                 (base-iri (. (. (. pr ctx) ttl-ctx) base-iri))
+                                (blank-labels (. (. (. pr ctx) ttl-ctx) blank-labels))
                                 (blank-counter (. (. (. pr ctx) ttl-ctx) blank-counter))
                                 (state s2)))
                               (formula-counter (. (. pr ctx) formula-counter))
@@ -403,6 +411,7 @@
                                           (ttl-ctx (record-new TtlParseContext
                                             (prefixes (. (. (. objr ctx) ttl-ctx) prefixes))
                                             (base-iri (. (. (. objr ctx) ttl-ctx) base-iri))
+                                            (blank-labels (. (. (. objr ctx) ttl-ctx) blank-labels))
                                             (blank-counter (. (. (. objr ctx) ttl-ctx) blank-counter))
                                             (state final-state)))
                                           (formula-counter (. (. objr ctx) formula-counter))
@@ -421,6 +430,7 @@
                                               (ttl-ctx (record-new TtlParseContext
                                                 (prefixes (. (. (. objr ctx) ttl-ctx) prefixes))
                                                 (base-iri (. (. (. objr ctx) ttl-ctx) base-iri))
+                                                (blank-labels (. (. (. objr ctx) ttl-ctx) blank-labels))
                                                 (blank-counter (. (. (. objr ctx) ttl-ctx) blank-counter))
                                                 (state s5)))
                                               (formula-counter (. (. objr ctx) formula-counter))
@@ -474,7 +484,7 @@
     (@spec ((Arena N3ParseContext) -> (Result N3TripleResult ParseError)))
     (@alloc arena)
     (@example
-      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ (ParseState "{ :a :b :c } => { :d :e :f } ." 0 1 1)) 0 false (none)))
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ _ (ParseState "{ :a :b :c } => { :d :e :f } ." 0 1 1)) 0 false (none)))
       ->
       (ok (record (triple (N3Triple (n3-formula ...) ... (n3-formula ...))) (ctx ...))))
     (let ((ante-result (parse-formula arena ctx)))
@@ -492,6 +502,7 @@
                                   (ttl-ctx (record-new TtlParseContext
                                     (prefixes (. (. (. ar ctx) ttl-ctx) prefixes))
                                     (base-iri (. (. (. ar ctx) ttl-ctx) base-iri))
+                                    (blank-labels (. (. (. ar ctx) ttl-ctx) blank-labels))
                                     (blank-counter (. (. (. ar ctx) ttl-ctx) blank-counter))
                                     (state s6)))
                                   (formula-counter (. (. ar ctx) formula-counter))
@@ -513,6 +524,7 @@
                                               (ttl-ctx (record-new TtlParseContext
                                                 (prefixes (. (. (. cr ctx) ttl-ctx) prefixes))
                                                 (base-iri (. (. (. cr ctx) ttl-ctx) base-iri))
+                                                (blank-labels (. (. (. cr ctx) ttl-ctx) blank-labels))
                                                 (blank-counter (. (. (. cr ctx) ttl-ctx) blank-counter))
                                                 (state s9)))
                                               (formula-counter (. (. cr ctx) formula-counter))
@@ -594,6 +606,7 @@
           (ttl-ctx (record-new TtlParseContext
             (prefixes (. (. ctx ttl-ctx) prefixes))
             (base-iri (. (. ctx ttl-ctx) base-iri))
+            (blank-labels (. (. ctx ttl-ctx) blank-labels))
             (blank-counter (. (. ctx ttl-ctx) blank-counter))
             (state s)))
           (formula-counter (. ctx formula-counter))
@@ -633,6 +646,7 @@
               (ttl-ctx (record-new TtlParseContext
                 (prefixes (. (. ctx ttl-ctx) prefixes))
                 (base-iri (. (. ctx ttl-ctx) base-iri))
+                (blank-labels (. (. ctx ttl-ctx) blank-labels))
                 (blank-counter (. (. ctx ttl-ctx) blank-counter))
                 (state s2)))
               (formula-counter (. ctx formula-counter))

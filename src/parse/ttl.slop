@@ -5,6 +5,7 @@
     PrefixMap
     PrefixBinding
     TtlParseContext
+    BlankLabelBinding
     TtlFileError
     is-pn-chars-base
     is-pn-chars
@@ -40,6 +41,10 @@
     (count (Int 0 ..))))
 
   (type BlankNodeCounter (Int 0 ..))
+
+  (type BlankLabelBinding (record
+    (label String)
+    (id (Int 0 ..))))
 
   (type GenBlankResult (record
     (id (Int 0 ..))
@@ -77,6 +82,7 @@
   (type TtlParseContext (record
     (prefixes PrefixMap)
     (base-iri (Option String))
+    (blank-labels (List BlankLabelBinding))
     (blank-counter BlankNodeCounter)
     (state ParseState)))
 
@@ -123,6 +129,16 @@
           (set! result (some (. b iri)))))
       result))
 
+  (fn blank-label-lookup ((in labels (List BlankLabelBinding)) (in label String))
+    (@intent "Look up blank node ID for a given label")
+    (@spec (((List BlankLabelBinding) String) -> (Option (Int 0 ..))))
+    (@pure)
+    (let ((mut result (Option (Int 0 ..)) (none)))
+      (for-each (b labels)
+        (when (string-eq (. b label) label)
+          (set! result (some (. b id)))))
+      result))
+
   ;; ---------------------------------------------------------------------------
   ;; Context management
   ;; ---------------------------------------------------------------------------
@@ -139,6 +155,7 @@
     (record-new TtlParseContext
       (prefixes (make-prefix-map arena))
       (base-iri (none))
+      (blank-labels (list-new arena BlankLabelBinding))
       (blank-counter 0)
       (state (make-parse-state arena input))))
 
@@ -153,6 +170,7 @@
       (ctx (record-new TtlParseContext
         (prefixes (. ctx prefixes))
         (base-iri (. ctx base-iri))
+        (blank-labels (. ctx blank-labels))
         (blank-counter (+ (. ctx blank-counter) 1))
         (state (. ctx state))))))
 
@@ -166,7 +184,7 @@
     (@alloc arena)
     (@pre {(state-peek ctx.state) == 60})
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "<http://example.org/foo>" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "<http://example.org/foo>" 0 1 1)))
       ->
       (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
     (let ((s1 (state-advance arena (. ctx state))))
@@ -178,6 +196,7 @@
               (ctx (record-new TtlParseContext
                 (prefixes (. ctx prefixes))
                 (base-iri (. ctx base-iri))
+                (blank-labels (. ctx blank-labels))
                 (blank-counter (. ctx blank-counter))
                 (state (. res state)))))))
           ((error e) (error e))))))
@@ -213,7 +232,7 @@
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) _ 0 (ParseState "ex:foo" 0 1 1)))
+      ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) _ _ 0 (ParseState "ex:foo" 0 1 1)))
       ->
       (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
     (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars)))
@@ -230,6 +249,7 @@
                       (ctx (record-new TtlParseContext
                         (prefixes (. ctx prefixes))
                         (base-iri (. ctx base-iri))
+                        (blank-labels (. ctx blank-labels))
                         (blank-counter (. ctx blank-counter))
                         (state (. local-result state)))))))
                   ((none)
@@ -262,6 +282,7 @@
                     (ctx (record-new TtlParseContext
                       (prefixes (. (. gen ctx) prefixes))
                       (base-iri (. (. gen ctx) base-iri))
+                      (blank-labels (. (. gen ctx) blank-labels))
                       (blank-counter (. (. gen ctx) blank-counter))
                       (state s3)))))))
               ;; blank node with property list
@@ -271,6 +292,7 @@
                           (record-new TtlParseContext
                             (prefixes (. (. gen ctx) prefixes))
                             (base-iri (. (. gen ctx) base-iri))
+                            (blank-labels (. (. gen ctx) blank-labels))
                             (blank-counter (. (. gen ctx) blank-counter))
                             (state s2))
                           bnode)))
@@ -286,25 +308,46 @@
                                   (ctx (record-new TtlParseContext
                                     (prefixes (. (. polr ctx) prefixes))
                                     (base-iri (. (. polr ctx) base-iri))
+                                    (blank-labels (. (. polr ctx) blank-labels))
                                     (blank-counter (. (. polr ctx) blank-counter))
                                     (state s5))))))
                               ((error e) (error e))))))
                       ((error e) (error e)))))))))
-        ;; _:label syntax
+        ;; _:label syntax — reuse same blank node ID for same label
         (let ((s1 (state-advance arena (. ctx state))))
           (let ((s2 (expect-char arena s1 58)))
             (match s2
               ((ok s3)
-                (let ((gen (context-gen-blank-id arena ctx)))
-                  (let ((label (parse-while arena s3 is-pn-chars)))
-                    (ok (record-new TermTriplesResult
-                      (term (make-blank arena (. gen id)))
-                      (extra-triples (list-new arena Triple))
-                      (ctx (record-new TtlParseContext
-                        (prefixes (. (. gen ctx) prefixes))
-                        (base-iri (. (. gen ctx) base-iri))
-                        (blank-counter (. (. gen ctx) blank-counter))
-                        (state (. label state)))))))))
+                (let ((label-result (parse-while arena s3 is-pn-chars)))
+                  (let ((label-str (. label-result result))
+                        (existing (blank-label-lookup (. ctx blank-labels) (. label-result result))))
+                    (match existing
+                      ((some existing-id)
+                        ;; reuse existing blank node ID for this label
+                        (ok (record-new TermTriplesResult
+                          (term (make-blank arena existing-id))
+                          (extra-triples (list-new arena Triple))
+                          (ctx (record-new TtlParseContext
+                            (prefixes (. ctx prefixes))
+                            (base-iri (. ctx base-iri))
+                            (blank-labels (. ctx blank-labels))
+                            (blank-counter (. ctx blank-counter))
+                            (state (. label-result state)))))))
+                      ((none)
+                        ;; new label — generate fresh ID and record it
+                        (let ((gen (context-gen-blank-id arena ctx)))
+                          (do
+                            (list-push (. ctx blank-labels)
+                              (record-new BlankLabelBinding (label label-str) (id (. gen id))))
+                            (ok (record-new TermTriplesResult
+                              (term (make-blank arena (. gen id)))
+                              (extra-triples (list-new arena Triple))
+                              (ctx (record-new TtlParseContext
+                                (prefixes (. (. gen ctx) prefixes))
+                                (base-iri (. (. gen ctx) base-iri))
+                                (blank-labels (. ctx blank-labels))
+                                (blank-counter (. (. gen ctx) blank-counter))
+                                (state (. label-result state)))))))))))))
               ((error e) (error e))))))))
 
   (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
@@ -328,11 +371,11 @@
     (@spec ((Arena TtlParseContext) -> (Result StringResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "\"hello\"" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "\"hello\"" 0 1 1)))
       ->
       (ok (record (value "hello") (ctx ...))))
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "'''multi\nline'''" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "'''multi\nline'''" 0 1 1)))
       ->
       (ok (record (value "multi\nline") (ctx ...))))
     (let ((q (state-peek (. ctx state)))
@@ -352,6 +395,7 @@
                             (record-new TtlParseContext
                               (prefixes (. ctx prefixes))
                               (base-iri (. ctx base-iri))
+                              (blank-labels (. ctx blank-labels))
                               (blank-counter (. ctx blank-counter))
                               (state s)))))
                       (match esc
@@ -371,6 +415,7 @@
                 (ctx (record-new TtlParseContext
                   (prefixes (. ctx prefixes))
                   (base-iri (. ctx base-iri))
+                  (blank-labels (. ctx blank-labels))
                   (blank-counter (. ctx blank-counter))
                   (state s)))))
               (error (make-parse-error arena 'unterminated-string "Unterminated triple-quoted string"
@@ -386,6 +431,7 @@
                             (record-new TtlParseContext
                               (prefixes (. ctx prefixes))
                               (base-iri (. ctx base-iri))
+                              (blank-labels (. ctx blank-labels))
                               (blank-counter (. ctx blank-counter))
                               (state s)))))
                       (match esc
@@ -402,6 +448,7 @@
                 (ctx (record-new TtlParseContext
                   (prefixes (. ctx prefixes))
                   (base-iri (. ctx base-iri))
+                  (blank-labels (. ctx blank-labels))
                   (blank-counter (. ctx blank-counter))
                   (state s)))))
               (error (make-parse-error arena 'unterminated-string "Unterminated string"
@@ -413,11 +460,11 @@
     (@alloc arena)
     (@pre {(state-peek ctx.state) == 92})
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "\\n" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "\\n" 0 1 1)))
       ->
       (ok (record (char 10) (ctx ...))))
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "\\t" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "\\t" 0 1 1)))
       ->
       (ok (record (char 9) (ctx ...))))
     (let ((s1 (state-advance arena (. ctx state))))
@@ -426,6 +473,7 @@
           (let ((new-ctx (record-new TtlParseContext
                   (prefixes (. ctx prefixes))
                   (base-iri (. ctx base-iri))
+                  (blank-labels (. ctx blank-labels))
                   (blank-counter (. ctx blank-counter))
                   (state s2))))
             (cond
@@ -446,15 +494,15 @@
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "\"hello\"" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "\"hello\"" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "hello" (none) (none)))) (ctx ...))))
     (@example
-      ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "xsd" "http://www.w3.org/2001/XMLSchema#")) 1) _ 0 (ParseState "\"42\"^^xsd:integer" 0 1 1)))
+      ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "xsd" "http://www.w3.org/2001/XMLSchema#")) 1) _ _ 0 (ParseState "\"42\"^^xsd:integer" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))) (ctx ...))))
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "\"hello\"@en" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "\"hello\"@en" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "hello" (none) (some "en")))) (ctx ...))))
     (let ((str-result (parse-string-literal arena ctx)))
@@ -469,6 +517,7 @@
                   (let ((dt-ctx (record-new TtlParseContext
                           (prefixes (. (. sr ctx) prefixes))
                           (base-iri (. (. sr ctx) base-iri))
+                          (blank-labels (. (. sr ctx) blank-labels))
                           (blank-counter (. (. sr ctx) blank-counter))
                           (state s2))))
                     (if (== (state-peek s2) 60)
@@ -503,6 +552,7 @@
                       (ctx (record-new TtlParseContext
                         (prefixes (. (. sr ctx) prefixes))
                         (base-iri (. (. sr ctx) base-iri))
+                        (blank-labels (. (. sr ctx) blank-labels))
                         (blank-counter (. (. sr ctx) blank-counter))
                         (state (. lang-result state)))))))))
               ;; plain literal
@@ -517,11 +567,11 @@
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "42" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "42" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "42" (some "http://www.w3.org/2001/XMLSchema#integer") (none)))) (ctx ...))))
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "3.14" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "3.14" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "3.14" (some "http://www.w3.org/2001/XMLSchema#decimal") (none)))) (ctx ...))))
     (let ((start (. (. ctx state) offset))
@@ -558,6 +608,7 @@
           (ctx (record-new TtlParseContext
             (prefixes (. ctx prefixes))
             (base-iri (. ctx base-iri))
+            (blank-labels (. ctx blank-labels))
             (blank-counter (. ctx blank-counter))
             (state s))))))))
 
@@ -566,7 +617,7 @@
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "true" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "true" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "true" (some "http://www.w3.org/2001/XMLSchema#boolean") (none)))) (ctx ...))))
     (let ((c (state-peek (. ctx state))))
@@ -578,6 +629,7 @@
             (ctx (record-new TtlParseContext
               (prefixes (. ctx prefixes))
               (base-iri (. ctx base-iri))
+              (blank-labels (. ctx blank-labels))
               (blank-counter (. ctx blank-counter))
               (state s))))))
         ;; false (5 chars)
@@ -587,6 +639,7 @@
             (ctx (record-new TtlParseContext
               (prefixes (. ctx prefixes))
               (base-iri (. ctx base-iri))
+              (blank-labels (. ctx blank-labels))
               (blank-counter (. ctx blank-counter))
               (state s)))))))))
 
@@ -599,7 +652,7 @@
     (@spec ((Arena TtlParseContext) -> (Result TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext _ _ 0 (ParseState "<http://example.org/>" 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "<http://example.org/>" 0 1 1)))
       ->
       (ok (record (term (term-iri (IRI "http://example.org/"))) (ctx ...))))
     (let ((c (state-peek (. ctx state))))
@@ -643,6 +696,7 @@
                 (ctx (record-new TtlParseContext
                   (prefixes (. ctx prefixes))
                   (base-iri (. ctx base-iri))
+                  (blank-labels (. ctx blank-labels))
                   (blank-counter (. ctx blank-counter))
                   (state (state-advance arena (. ctx state)))))))
               (parse-prefixed-name arena ctx))))
@@ -657,6 +711,7 @@
           (mut cur-ctx (record-new TtlParseContext
             (prefixes (. ctx prefixes))
             (base-iri (. ctx base-iri))
+            (blank-labels (. ctx blank-labels))
             (blank-counter (. ctx blank-counter))
             (state s1)))
           (rdf-first (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#first"))
@@ -686,6 +741,7 @@
                       (set! cur-ctx (record-new TtlParseContext
                         (prefixes (. (. gen ctx) prefixes))
                         (base-iri (. (. gen ctx) base-iri))
+                        (blank-labels (. (. gen ctx) blank-labels))
                         (blank-counter (. (. gen ctx) blank-counter))
                         (state (skip-whitespace arena (. (. gen ctx) state))))))))))
             ((error e) (do (return (error e)) ())))))
@@ -703,6 +759,7 @@
               (ctx (record-new TtlParseContext
                 (prefixes (. cur-ctx prefixes))
                 (base-iri (. cur-ctx base-iri))
+                (blank-labels (. cur-ctx blank-labels))
                 (blank-counter (. cur-ctx blank-counter))
                 (state s-after))))))
           ((error e) (error e))))))
@@ -735,9 +792,9 @@
     (@alloc arena)
     (@pre {(state-peek ctx.state) == 64})
     (@example
-      ((TtlParseContext (PrefixMap (list PrefixBinding) 0) (none) 0 (ParseState "@prefix ex: <http://example.org/> ." 0 1 1)))
+      ((TtlParseContext (PrefixMap (list PrefixBinding) 0) (none) _ 0 (ParseState "@prefix ex: <http://example.org/> ." 0 1 1)))
       ->
-      (ok (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) (none) 0 ...)))
+      (ok (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) (none) _ 0 ...)))
     (let ((s1 (state-advance arena (. ctx state))))
       (let ((kw (parse-while arena s1 is-pn-chars-base)))
         (let ((keyword (. kw result))
@@ -753,6 +810,7 @@
                               (record-new TtlParseContext
                                 (prefixes (. ctx prefixes))
                                 (base-iri (. ctx base-iri))
+                                (blank-labels (. ctx blank-labels))
                                 (blank-counter (. ctx blank-counter))
                                 (state s5)))))
                         (match iri-result
@@ -768,6 +826,7 @@
                                           ((term-iri iri) (. iri value))
                                           (_ ""))))
                                       (base-iri (. ctx base-iri))
+                                      (blank-labels (. ctx blank-labels))
                                       (blank-counter (. ctx blank-counter))
                                       (state s8))))
                                   ((error e) (error e))))))
@@ -778,6 +837,7 @@
                     (record-new TtlParseContext
                       (prefixes (. ctx prefixes))
                       (base-iri (. ctx base-iri))
+                      (blank-labels (. ctx blank-labels))
                       (blank-counter (. ctx blank-counter))
                       (state s2)))))
               (match iri-result
@@ -791,6 +851,7 @@
                             (base-iri (match (. ir term)
                               ((term-iri iri) (some (. iri value)))
                               (_ (. ctx base-iri))))
+                            (blank-labels (. ctx blank-labels))
                             (blank-counter (. ctx blank-counter))
                             (state s5))))
                         ((error e) (error e))))))
@@ -811,6 +872,7 @@
                           (record-new TtlParseContext
                             (prefixes (. ctx prefixes))
                             (base-iri (. ctx base-iri))
+                            (blank-labels (. ctx blank-labels))
                             (blank-counter (. ctx blank-counter))
                             (state s4)))))
                     (match iri-result
@@ -822,6 +884,7 @@
                               ((term-iri iri) (. iri value))
                               (_ ""))))
                           (base-iri (. ctx base-iri))
+                          (blank-labels (. ctx blank-labels))
                           (blank-counter (. ctx blank-counter))
                           (state (. (. ir ctx) state)))))
                       ((error e) (error e))))))
@@ -836,7 +899,7 @@
     (@spec ((Arena TtlParseContext) -> (Result TripleResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext prefixes _ 0 (ParseState "<http://s> <http://p> <http://o> ." 0 1 1)))
+      ((TtlParseContext prefixes _ _ 0 (ParseState "<http://s> <http://p> <http://o> ." 0 1 1)))
       ->
       (ok (record
         (triple (Triple (term-iri (IRI "http://s")) (term-iri (IRI "http://p")) (term-iri (IRI "http://o"))))
@@ -849,6 +912,7 @@
                     (record-new TtlParseContext
                       (prefixes (. (. sr ctx) prefixes))
                       (base-iri (. (. sr ctx) base-iri))
+                      (blank-labels (. (. sr ctx) blank-labels))
                       (blank-counter (. (. sr ctx) blank-counter))
                       (state s1)))))
               (match pred-result
@@ -858,6 +922,7 @@
                             (record-new TtlParseContext
                               (prefixes (. (. pr ctx) prefixes))
                               (base-iri (. (. pr ctx) base-iri))
+                              (blank-labels (. (. pr ctx) blank-labels))
                               (blank-counter (. (. pr ctx) blank-counter))
                               (state s2)))))
                       (match obj-result
@@ -871,6 +936,7 @@
                                     (ctx (record-new TtlParseContext
                                       (prefixes (. (. objr ctx) prefixes))
                                       (base-iri (. (. objr ctx) base-iri))
+                                      (blank-labels (. (. objr ctx) blank-labels))
                                       (blank-counter (. (. objr ctx) blank-counter))
                                       (state s5))))))
                                 ((error e) (error e))))))
@@ -894,6 +960,7 @@
                 (set! cur-ctx (record-new TtlParseContext
                   (prefixes (. cur-ctx prefixes))
                   (base-iri (. cur-ctx base-iri))
+                  (blank-labels (. cur-ctx blank-labels))
                   (blank-counter (. cur-ctx blank-counter))
                   (state s1)))
                 (set! done true))
@@ -902,6 +969,7 @@
                       (record-new TtlParseContext
                         (prefixes (. cur-ctx prefixes))
                         (base-iri (. cur-ctx base-iri))
+                        (blank-labels (. cur-ctx blank-labels))
                         (blank-counter (. cur-ctx blank-counter))
                         (state s1)))))
                 (match pred-result
@@ -918,6 +986,7 @@
                                 (set! cur-ctx (record-new TtlParseContext
                                   (prefixes (. cur-ctx prefixes))
                                   (base-iri (. cur-ctx base-iri))
+                                  (blank-labels (. cur-ctx blank-labels))
                                   (blank-counter (. cur-ctx blank-counter))
                                   (state (state-advance arena s3))))
                                 (set! done true)))))
@@ -938,6 +1007,7 @@
                   (record-new TtlParseContext
                     (prefixes (. cur-ctx prefixes))
                     (base-iri (. cur-ctx base-iri))
+                    (blank-labels (. cur-ctx blank-labels))
                     (blank-counter (. cur-ctx blank-counter))
                     (state s1)))))
             (match obj-result
@@ -952,6 +1022,7 @@
                       (set! cur-ctx (record-new TtlParseContext
                         (prefixes (. cur-ctx prefixes))
                         (base-iri (. cur-ctx base-iri))
+                        (blank-labels (. cur-ctx blank-labels))
                         (blank-counter (. cur-ctx blank-counter))
                         (state (state-advance arena s2))))
                       (set! done true)))))
@@ -977,6 +1048,7 @@
         (set! ctx (record-new TtlParseContext
           (prefixes (. ctx prefixes))
           (base-iri (. ctx base-iri))
+          (blank-labels (. ctx blank-labels))
           (blank-counter (. ctx blank-counter))
           (state s)))
         (while (not (state-at-end (. ctx state)))
@@ -1015,6 +1087,7 @@
                                         (set! ctx (record-new TtlParseContext
                                           (prefixes (. (. polr ctx) prefixes))
                                           (base-iri (. (. polr ctx) base-iri))
+                                          (blank-labels (. (. polr ctx) blank-labels))
                                           (blank-counter (. (. polr ctx) blank-counter))
                                           (state s5))))
                                       ((error e) (do (return (error e)) ())))))))
@@ -1024,6 +1097,7 @@
             (set! ctx (record-new TtlParseContext
               (prefixes (. ctx prefixes))
               (base-iri (. ctx base-iri))
+              (blank-labels (. ctx blank-labels))
               (blank-counter (. ctx blank-counter))
               (state s2))))))
       (ok g)))
