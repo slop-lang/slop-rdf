@@ -546,7 +546,7 @@
               ;; @ language tag
               ((== (state-peek s) 64)
                 (let ((s2 (state-advance arena s)))
-                  (let ((lang-result (parse-while arena s2 is-pn-chars-base)))
+                  (let ((lang-result (parse-while arena s2 is-pn-chars)))
                     (ok (record-new TermResult
                       (term (make-literal arena val (none) (some (. lang-result result))))
                       (ctx (record-new TtlParseContext

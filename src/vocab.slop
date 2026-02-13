@@ -125,6 +125,7 @@
     SHACL_NOT SHACL_AND SHACL_OR SHACL_XONE
     SHACL_NODE SHACL_PROPERTY SHACL_QUALIFIED_VALUE_SHAPE
     SHACL_QUALIFIED_MIN_COUNT SHACL_QUALIFIED_MAX_COUNT
+    SHACL_QUALIFIED_VALUE_SHAPES_DISJOINT
     SHACL_CLOSED SHACL_IGNORED_PROPERTIES SHACL_HAS_VALUE SHACL_IN
     SHACL_IRI SHACL_BLANK_NODE SHACL_LITERAL SHACL_BLANK_NODE_OR_IRI SHACL_BLANK_NODE_OR_LITERAL SHACL_IRI_OR_LITERAL
     SHACL_VALIDATION_REPORT SHACL_CONFORMS SHACL_RESULT
@@ -629,6 +630,7 @@
   (const SHACL_QUALIFIED_VALUE_SHAPE String "http://www.w3.org/ns/shacl#qualifiedValueShape")
   (const SHACL_QUALIFIED_MIN_COUNT String "http://www.w3.org/ns/shacl#qualifiedMinCount")
   (const SHACL_QUALIFIED_MAX_COUNT String "http://www.w3.org/ns/shacl#qualifiedMaxCount")
+  (const SHACL_QUALIFIED_VALUE_SHAPES_DISJOINT String "http://www.w3.org/ns/shacl#qualifiedValueShapesDisjoint")
   ;; Other constraints
   (const SHACL_CLOSED String "http://www.w3.org/ns/shacl#closed")
   (const SHACL_IGNORED_PROPERTIES String "http://www.w3.org/ns/shacl#ignoredProperties")
