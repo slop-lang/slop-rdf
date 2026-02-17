@@ -179,6 +179,7 @@
     (@intent "Check if two terms are equal")
     (@spec ((Term Term) -> Bool))
     (@pure)
+    (@post (== $result (== a b)))
     (@example ((term-iri (IRI "http://a.org")) (term-iri (IRI "http://a.org"))) -> true)
     (@example ((term-iri (IRI "http://a.org")) (term-iri (IRI "http://b.org"))) -> false)
     (@example ((term-blank (BlankNode 1)) (term-blank (BlankNode 1))) -> true)

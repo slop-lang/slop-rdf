@@ -56,6 +56,7 @@
         "{ }"
         (let ((mut result "{\n"))
           (for-each (triple (. g triples))
+            (@loop-invariant (starts-with result "{"))
             (set! result (string-concat arena result "  "))
             (set! result (string-concat arena result
               (serialize-term arena (. triple subject) prefixes)))

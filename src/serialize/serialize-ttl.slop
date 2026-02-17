@@ -151,6 +151,7 @@
           (mut compressed (Option String) (none)))
       ;; Try each prefix binding to find a match
       (for-each (b (. prefixes bindings))
+        (@loop-invariant (match compressed ((some s) (> (string-len s) 0)) ((none) true)))
         (match compressed
           ((some _) (do))
           ((none)
@@ -175,6 +176,7 @@
     (@spec ((Arena Literal) -> String))
     (@alloc arena)
     (@post (> (string-len $result) 0))
+    (@assume (> (string-len $result) 0))
     (@example
       ((Literal "hello" (none) (none)))
       ->
