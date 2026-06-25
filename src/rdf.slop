@@ -12,6 +12,7 @@
     make-iri
     make-blank
     make-literal
+    make-triple-term
     term-kind
     term-eq
     make-triple
@@ -30,7 +31,7 @@
     triple-free
     graph-free)
 
-  (type TermKind (enum iri blank literal))
+  (type TermKind (enum iri blank literal triple))
 
   (type IRI (record (value String)))
 
@@ -43,7 +44,7 @@
       (datatype (Option String))
       (lang (Option String))))
 
-  (type Term (union (term-iri IRI) (term-blank BlankNode) (term-literal Literal)))
+  (type Term (union (term-iri IRI) (term-blank BlankNode) (term-literal Literal) (term-triple (Ptr Triple))))
 
   (type Triple (record (subject Term) (predicate Term) (object Term)))
 
@@ -105,6 +106,20 @@
     :c-name
     "rdf_make_literal")
 
+  (fn make-triple-term ((in arena Arena) (in t Triple))
+    (@intent "Create an RDF 1.2 triple term wrapping an embedded triple")
+    (@spec ((Arena Triple) -> Term))
+    (@alloc arena)
+    (@post (match $result ((term-triple _) true) (_ false)))
+    (let ((p (cast (Ptr Triple) (arena-alloc arena (sizeof Triple)))))
+      (do
+        (set! p subject (. t subject))
+        (set! p predicate (. t predicate))
+        (set! p object (. t object))
+        (union-new Term term-triple p)))
+    :c-name
+    "rdf_make_triple_term")
+
   (fn term-kind ((in t Term))
     (@intent "Get the kind discriminator of a term")
     (@spec ((Term) -> TermKind))
@@ -115,7 +130,8 @@
     (match t
       ((term-iri _) 'iri)
       ((term-blank _) 'blank)
-      ((term-literal _) 'literal))
+      ((term-literal _) 'literal)
+      ((term-triple _) 'triple))
     :c-name
     "rdf_term_kind")
 
@@ -197,6 +213,10 @@
       ((term-literal a-lit)
         (match b
           ((term-literal b-lit) (literal-eq a-lit b-lit))
+          (_ false)))
+      ((term-triple a-tt)
+        (match b
+          ((term-triple b-tt) (triple-eq (deref a-tt) (deref b-tt)))
           (_ false))))
     :c-name
     "rdf_term_eq")
@@ -353,7 +373,8 @@
     (match (deref t)
       ((term-iri _) (do))
       ((term-blank _) (do))
-      ((term-literal _) (do)))
+      ((term-literal _) (do))
+      ((term-triple _) (do)))
     :c-name
     "rdf_term_free")
 
