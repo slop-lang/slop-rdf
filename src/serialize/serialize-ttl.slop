@@ -19,7 +19,7 @@
   (import ttl (PrefixMap PrefixBinding is-pn-chars is-pn-chars-base prefix-map-lookup))
   (import vocab (XSD_NS XSD_STRING XSD_BOOLEAN XSD_INTEGER XSD_DECIMAL XSD_DOUBLE))
   (import file (file-open file-close file-write-line File FileMode FileError))
-  (import strlib (starts-with substring char-at is-digit is-alpha))
+  (import strlib (starts-with substring char-at is-digit is-alpha string-build))
 
   (ffi "stdio.h"
     (fwrite ((buf (Ptr Void)) (size U64) (count U64) (file (Ptr Void))) U64))
@@ -271,7 +271,18 @@
     (match t
       ((term-iri iri) (serialize-iri arena iri prefixes))
       ((term-blank node) (serialize-blank arena node))
-      ((term-literal lit) (serialize-literal arena lit))))
+      ((term-literal lit) (serialize-literal arena lit))
+      ((term-triple tt) (serialize-triple-term arena tt prefixes))))
+
+  (fn serialize-triple-term ((in arena Arena) (in tt (Ptr Triple)) (in prefixes PrefixMap))
+    (@intent "Serialize an RDF 1.2 triple term to <<( s p o )>> Turtle syntax")
+    (@spec ((Arena (Ptr Triple) PrefixMap) -> String))
+    (@alloc arena)
+    (@post (> (string-len $result) 0))
+    (let ((s (serialize-term arena (. (deref tt) subject) prefixes))
+          (p (serialize-term arena (. (deref tt) predicate) prefixes))
+          (o (serialize-term arena (. (deref tt) object) prefixes)))
+      (string-build arena (list String "<<( " s " " p " " o " )>>"))))
 
   ;; ---------------------------------------------------------------------------
   ;; Prefix / base declarations

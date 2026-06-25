@@ -3,7 +3,7 @@
 
   (import rdf
     (Term Graph make-iri make-blank make-literal make-triple
-     graph-size graph-contains))
+     graph-size graph-contains graph-match))
   (import ttl (parse-ttl-string parse-ttl-file TtlFileError))
   (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
 
@@ -203,6 +203,41 @@
               (set! s (assert-true arena s "Collection: graph has triples" (> (graph-size g) 0)))))
           ((error e)
             (set! s (assert-true arena s "Collection: parse should succeed" false)))))
+
+      ;; Test RDF 1.2 annotation block {| |}
+      (println "")
+      (println "-- RDF 1.2 Annotation {| |} --")
+      (let ((result (parse-ttl-string arena "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o {| ex:a ex:b ; ex:c ex:d |} .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-eq-int arena s "Annotation: graph size is 4" 4 (graph-size g)))
+              (let ((m (graph-match arena g (none)
+                         (some (make-iri arena "http://www.w3.org/1999/02/22-rdf-syntax-ns#reifies"))
+                         (none))))
+                (set! s (assert-eq-int arena s "Annotation: exactly one rdf:reifies triple" 1 (graph-size m))))))
+          ((error e)
+            (set! s (assert-true arena s "Annotation: parse should succeed" false)))))
+
+      ;; Test RDF 1.2 annotation combined with semicolon predicate list
+      (println "")
+      (println "-- RDF 1.2 Annotation + Semicolon --")
+      (let ((result (parse-ttl-string arena "@prefix ex: <http://example.org/> .\nex:s ex:p ex:o {| ex:a ex:b |} ;\n     ex:q ex:r .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Annotation+semi: graph size is 4" 4 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Annotation+semi: parse should succeed" false)))))
+
+      ;; Test RDF 1.2 triple term <<( )>> as object
+      (println "")
+      (println "-- RDF 1.2 Triple Term <<( )>> --")
+      (let ((result (parse-ttl-string arena "@prefix ex: <http://example.org/> .\nex:s ex:p <<( ex:a ex:b ex:c )>> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "Triple term: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "Triple term: parse should succeed" false)))))
 
       (test-summary arena s)
 
