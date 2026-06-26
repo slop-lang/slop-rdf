@@ -194,6 +194,22 @@
       ((term-iri iri) (. iri value))
       (_ "")))
 
+  (fn list-push-triples ((in arena Arena) (in dst (List Triple)) (in src (List Triple)))
+    (@intent "Append every triple from src onto dst, returning the combined list")
+    (@spec ((Arena (List Triple) (List Triple)) -> (List Triple)))
+    (@alloc arena)
+    (let ((mut acc dst))
+      (for-each (t src) (list-push acc t))
+      acc))
+
+  (fn graph-add-all ((in arena Arena) (in g Graph) (in src (List Triple)))
+    (@intent "Add every triple from src to the graph, returning the new graph")
+    (@spec ((Arena Graph (List Triple)) -> Graph))
+    (@alloc arena)
+    (let ((mut acc g))
+      (for-each (t src) (set! acc (graph-add-unchecked arena acc t)))
+      acc))
+
   ;; ---------------------------------------------------------------------------
   ;; IRI parsing
   ;; ---------------------------------------------------------------------------
@@ -304,15 +320,23 @@
                     (extra-triples (list-new arena Triple))
                     (ctx (ctx-with-state ctx (. label-result state))))))
                 ((none)
-                  ;; new label — generate fresh ID and record it
-                  (let ((gen (context-gen-blank-id arena ctx)))
-                    (do
-                      (list-push (. ctx blank-labels)
-                        (record-new BlankLabelBinding (label label-str) (id (. gen id))))
-                      (ok (record-new TermTriplesResult
-                        (term (make-blank arena (. gen id)))
-                        (extra-triples (list-new arena Triple))
-                        (ctx (ctx-with-state (. gen ctx) (. label-result state)))))))))))))))
+                  ;; new label — generate a fresh ID, record it, and thread the
+                  ;; updated label list forward. list-push on the struct field
+                  ;; (. ctx blank-labels) mutates a by-value copy and would drop the
+                  ;; binding, so bind the list to a mutable local and store it back.
+                  (let ((gen (context-gen-blank-id arena ctx))
+                        (mut labels (. ctx blank-labels)))
+                    (list-push labels
+                      (record-new BlankLabelBinding (label label-str) (id (. gen id))))
+                    (ok (record-new TermTriplesResult
+                      (term (make-blank arena (. gen id)))
+                      (extra-triples (list-new arena Triple))
+                      (ctx (record-new TtlParseContext
+                        (prefixes (. ctx prefixes))
+                        (base-iri (. ctx base-iri))
+                        (blank-labels labels)
+                        (blank-counter (. (. gen ctx) blank-counter))
+                        (state (. label-result state)))))))))))))))
 
   (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a blank node, returning TermResult for backward compat")
@@ -659,8 +683,7 @@
                   (!= (state-peek (. cur-ctx state)) 41))
         (let ((er (? (parse-term-extended arena cur-ctx))))
           (do
-            (for-each (t (. er extra-triples))
-              (list-push triples t))
+            (set! triples (list-push-triples arena triples (. er extra-triples)))
             (let ((gen (context-gen-blank-id arena (. er ctx))))
               (let ((cell-node (make-blank arena (. gen id))))
                 (do
@@ -706,8 +729,8 @@
           (s-end (? (expect-triple-term-close arena (skip-whitespace arena (. (. objr ctx) state)))))
           (mut extras (list-new arena Triple)))
       (do
-        (for-each (t (. sr extra-triples)) (list-push extras t))
-        (for-each (t (. objr extra-triples)) (list-push extras t))
+        (set! extras (list-push-triples arena extras (. sr extra-triples)))
+        (set! extras (list-push-triples arena extras (. objr extra-triples)))
         (ok (record-new TermTriplesResult
           (term (make-triple-term arena (make-triple arena (. sr term) (. pr term) (. objr term))))
           (extra-triples extras)
@@ -826,8 +849,7 @@
             (let ((pr (? (parse-term arena (ctx-with-state cur-ctx s1))))
                   (olr (? (parse-object-list arena (. pr ctx) subject (. pr term)))))
               (do
-                (for-each (t (. olr triples))
-                  (list-push triples t))
+                (set! triples (list-push-triples arena triples (. olr triples)))
                 (set! cur-ctx (. olr ctx))
                 (let ((s3 (skip-whitespace arena (. (. olr ctx) state))))
                   (if (== (state-peek s3) 59)
@@ -851,7 +873,7 @@
           (s3 (? (expect-char arena s2 125))))
       (do
         (list-push triples (make-triple arena reifier reifies (make-triple-term arena base-triple)))
-        (for-each (t (. polr triples)) (list-push triples t))
+        (set! triples (list-push-triples arena triples (. polr triples)))
         (ok (record-new TriplesResult
           (triples triples)
           (ctx (ctx-with-state (. polr ctx) s3)))))))
@@ -867,8 +889,7 @@
         (let ((s1 (skip-whitespace arena (. cur-ctx state)))
               (objr (? (parse-term-extended arena (ctx-with-state cur-ctx s1)))))
           (do
-            (for-each (t (. objr extra-triples))
-              (list-push triples t))
+            (set! triples (list-push-triples arena triples (. objr extra-triples)))
             (list-push triples (make-triple arena subject predicate (. objr term)))
             (set! cur-ctx (. objr ctx))
             ;; RDF 1.2 annotation: zero or more {| ... |} blocks reify this triple
@@ -879,8 +900,7 @@
                     (let ((ar (? (parse-annotation arena (ctx-with-state cur-ctx sa)
                                   (make-triple arena subject predicate (. objr term))))))
                       (do
-                        (for-each (t (. ar triples))
-                          (list-push triples t))
+                        (set! triples (list-push-triples arena triples (. ar triples)))
                         (set! cur-ctx (. ar ctx))))
                     (set! ann-done true)))))
             (let ((s2 (skip-whitespace arena (. cur-ctx state))))
@@ -919,13 +939,11 @@
               (else
                 (let ((sr (? (parse-term-extended arena ctx))))
                   (do
-                    (for-each (t (. sr extra-triples))
-                      (set! g (graph-add-unchecked arena g t)))
+                    (set! g (graph-add-all arena g (. sr extra-triples)))
                     (let ((polr (? (parse-predicate-object-list arena (. sr ctx) (. sr term))))
                           (s5 (? (expect-char arena (skip-whitespace arena (. (. polr ctx) state)) 46))))
                       (do
-                        (for-each (t (. polr triples))
-                          (set! g (graph-add-unchecked arena g t)))
+                        (set! g (graph-add-all arena g (. polr triples)))
                         (set! ctx (ctx-with-state (. polr ctx) s5)))))))))
           (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))))
       (ok g)))

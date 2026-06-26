@@ -106,6 +106,20 @@
           ((error e)
             (set! s (assert-true arena s "Blank node: parse should succeed" false)))))
 
+      ;; Test labeled blank node coreference: the same _:label across statements
+      ;; must denote the same blank node (the first labeled bnode gets id 0).
+      (println "")
+      (println "-- Labeled Blank Node Coreference --")
+      (let ((result (parse-ttl-string arena "_:x <http://example.org/p> <http://example.org/o1> .\n_:x <http://example.org/p> <http://example.org/o2> .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-eq-int arena s "Coreference: graph size is 2" 2 (graph-size g)))
+              (let ((m (graph-match arena g (some (make-blank arena 0)) (none) (none))))
+                (set! s (assert-eq-int arena s "Coreference: _:x denotes one node (matches 2 triples)" 2 (graph-size m))))))
+          ((error e)
+            (set! s (assert-true arena s "Coreference: parse should succeed" false)))))
+
       ;; Test multiple triples
       (println "")
       (println "-- Multiple Triples --")
