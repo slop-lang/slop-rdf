@@ -1,5 +1,5 @@
 (module index
-  (@doc "Indexed RDF graph with SPO/PSO/OSP indexes for efficient pattern matching")
+  (@doc "Indexed RDF graph with SPO/PSO/OSP/POS indexes for efficient pattern matching")
 
   (import rdf (Term Triple Graph term-eq triple-subject triple-predicate triple-object make-triple))
 
@@ -25,11 +25,14 @@
   ;; Second-level index: maps a Term to its leaf TermSet
   (type TermSetMap (Map Term TermSet))
 
-  ;; Triple index with three access patterns - stores remaining Term at leaf
+  ;; Triple index with four access patterns - stores remaining Term at leaf.
+  ;; POS gives subjects directly for (?, p, o) queries, avoiding a scan of all
+  ;; subjects of p (e.g. every rdf:type assertion) in the predicate+object case.
   (type TripleIndex (record
     (spo (Map Term TermSetMap))   ;; subject -> predicate -> Set[object]
     (pso (Map Term TermSetMap))   ;; predicate -> subject -> Set[object]
-    (osp (Map Term TermSetMap)))) ;; object -> subject -> Set[predicate]
+    (osp (Map Term TermSetMap))   ;; object -> subject -> Set[predicate]
+    (pos (Map Term TermSetMap)))) ;; predicate -> object -> Set[subject]
 
   ;; Graph with indexes for O(1) lookups
   (type IndexedGraph (record
@@ -47,7 +50,8 @@
       (index (record-new TripleIndex
                (spo (map-new arena Term TermSetMap))
                (pso (map-new arena Term TermSetMap))
-               (osp (map-new arena Term TermSetMap))))
+               (osp (map-new arena Term TermSetMap))
+               (pos (map-new arena Term TermSetMap))))
       (size 0))
     :c-name "rdf_indexed_graph_create")
 
@@ -113,6 +117,22 @@
               (set-put ts p)
               (map-put subj-map s ts)
               (map-put osp-idx o subj-map)))))
+      ;; Update POS index: predicate -> object -> Set[subject]
+      (let ((pos-idx (. (. g index) pos)))
+        (match (map-get pos-idx p)
+          ((some obj-map)
+            (match (map-get obj-map o)
+              ((some subj-set) (set-put subj-set s))
+              ((none)
+                (let ((ts (set-new arena Term)))
+                  (set-put ts s)
+                  (map-put obj-map o ts)))))
+          ((none)
+            (let ((obj-map (map-new arena Term TermSet))
+                  (ts (set-new arena Term)))
+              (set-put ts s)
+              (map-put obj-map o ts)
+              (map-put pos-idx p obj-map)))))
       ;; Return updated graph
       (record-new IndexedGraph
         (triples (. g triples))
@@ -202,20 +222,25 @@
           ;; Subject not bound
           (match pred
             ((some p)
-              ;; Predicate bound - use PSO index
-              (match (map-get (. (. g index) pso) p)
-                ((some subj-map)
-                  (for-each ((s term-set) subj-map)
-                    (match obj
-                      ((some o)
-                        ;; P+O bound - check object in each subject's set
-                        (when (set-has term-set o)
-                          (list-push result (record-new Triple (subject s) (predicate p) (object o)))))
-                      ((none)
-                        ;; P only - iterate all objects
+              (match obj
+                ((some o)
+                  ;; P+O bound, subject free - use POS index (direct subject set)
+                  (match (map-get (. (. g index) pos) p)
+                    ((some obj-map)
+                      (match (map-get obj-map o)
+                        ((some subj-set)
+                          (for-each (s subj-set)
+                            (list-push result (record-new Triple (subject s) (predicate p) (object o)))))
+                        ((none) (do))))
+                    ((none) (do))))
+                ((none)
+                  ;; Only P bound - use PSO index
+                  (match (map-get (. (. g index) pso) p)
+                    ((some subj-map)
+                      (for-each ((s term-set) subj-map)
                         (for-each (o term-set)
-                          (list-push result (record-new Triple (subject s) (predicate p) (object o))))))))
-                ((none) (do))))
+                          (list-push result (record-new Triple (subject s) (predicate p) (object o))))))
+                    ((none) (do))))))
             ((none)
               ;; Neither S nor P bound
               (match obj
@@ -292,18 +317,25 @@
         ;; Subject not bound
         (match pred
           ((some p)
-            ;; Predicate bound - use PSO index
-            (match (map-get (. (. g index) pso) p)
-              ((some subj-map)
-                (for-each ((s term-set) subj-map)
-                  (match obj
-                    ((some o)
-                      (when (set-has term-set o)
-                        (callback (record-new Triple (subject s) (predicate p) (object o)))))
-                    ((none)
+            (match obj
+              ((some o)
+                ;; P+O bound, subject free - use POS index (direct subject set)
+                (match (map-get (. (. g index) pos) p)
+                  ((some obj-map)
+                    (match (map-get obj-map o)
+                      ((some subj-set)
+                        (for-each (s subj-set)
+                          (callback (record-new Triple (subject s) (predicate p) (object o)))))
+                      ((none) (do))))
+                  ((none) (do))))
+              ((none)
+                ;; Only P bound - use PSO index
+                (match (map-get (. (. g index) pso) p)
+                  ((some subj-map)
+                    (for-each ((s term-set) subj-map)
                       (for-each (o term-set)
-                        (callback (record-new Triple (subject s) (predicate p) (object o))))))))
-              ((none) (do))))
+                        (callback (record-new Triple (subject s) (predicate p) (object o))))))
+                  ((none) (do))))))
           ((none)
             ;; Neither S nor P bound
             (match obj
@@ -335,13 +367,15 @@
     (@alloc arena)
     (@pre (>= (. g size) 0))
     (let ((mut result (list-new arena Term))
-          (osp-idx (. (. g index) osp)))
-      ;; OSP leaf stores predicates: look up by object, iterate subjects, check predicate
-      (match (map-get osp-idx obj)
-        ((some subj-map)
-          (for-each ((s pred-set) subj-map)
-            (when (set-has pred-set pred)
-              (list-push result s))))
+          (pos-idx (. (. g index) pos)))
+      ;; POS index gives subjects directly: predicate -> object -> Set[subject]
+      (match (map-get pos-idx pred)
+        ((some obj-map)
+          (match (map-get obj-map obj)
+            ((some subj-set)
+              (for-each (s subj-set)
+                (list-push result s)))
+            ((none) (do))))
         ((none) (do)))
       result)
     :c-name "rdf_indexed_graph_subjects")
