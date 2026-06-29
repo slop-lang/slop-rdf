@@ -14,7 +14,9 @@
     prefix-map-add
     prefix-map-lookup
     parse-ttl-string
+    parse-ttl-string-for-each-triple
     parse-ttl-file
+    parse-ttl-file-for-each-triple
     parse-iri-ref
     parse-prefixed-name
     parse-blank-node
@@ -73,6 +75,10 @@
 
   (type GraphTriplesResult (record
     (graph Graph)
+    (ctx TtlParseContext)))
+
+  (type StreamTriplesResult (record
+    (count (Int 0 ..))
     (ctx TtlParseContext)))
 
   (type TermTriplesResult (record
@@ -1055,6 +1061,76 @@
                     (set! done true))))))))
       (ok (record-new GraphTriplesResult (graph acc) (ctx cur-ctx)))))
 
+  (fn emit-triples ((in triples (List Triple)) (in callback (Fn (Triple) Unit)))
+    (@intent "Emit a list of parsed triples to a streaming parser callback")
+    (@spec (((List Triple) (Fn (Triple) Unit)) -> (Int 0 ..)))
+    (let ((mut count 0))
+      (for-each (t triples)
+        (do
+          (callback t)
+          (set! count (+ count 1))))
+      count))
+
+  (fn parse-object-list-for-each-triple ((in arena Arena) (mut ctx TtlParseContext) (in subject Term) (in predicate Term) (in callback (Fn (Triple) Unit)))
+    (@intent "Parse object list and emit produced triples directly to a callback")
+    (@spec ((Arena TtlParseContext Term Term (Fn (Triple) Unit)) -> (Result StreamTriplesResult ParseError)))
+    (@alloc arena)
+    (let ((mut count 0)
+          (mut cur-ctx ctx)
+          (mut done false))
+      (while (not done)
+        (let ((s1 (skip-whitespace arena (. cur-ctx state)))
+              (objr (? (parse-term-extended arena (ctx-with-state cur-ctx s1)))))
+          (do
+            (set! count (+ count (emit-triples (. objr extra-triples) callback)))
+            (let ((base-triple (make-triple arena subject predicate (. objr term))))
+              (do
+                (callback base-triple)
+                (set! count (+ count 1))
+                (set! cur-ctx (. objr ctx))
+                ;; RDF 1.2 annotation: zero or more {| ... |} blocks reify this triple
+                (let ((mut ann-done false))
+                  (while (not ann-done)
+                    (let ((sa (skip-whitespace arena (. cur-ctx state))))
+                      (if (and (== (state-peek sa) 123) (== (state-peek-n sa 1) 124))
+                        (let ((ar (? (parse-annotation arena (ctx-with-state cur-ctx sa) base-triple))))
+                          (do
+                            (set! count (+ count (emit-triples (. ar triples) callback)))
+                            (set! cur-ctx (. ar ctx))))
+                        (set! ann-done true)))))))
+            (let ((s2 (skip-whitespace arena (. cur-ctx state))))
+              (if (== (state-peek s2) 44)
+                (set! cur-ctx (ctx-with-state cur-ctx (state-advance arena s2)))
+                (set! done true))))))
+      (ok (record-new StreamTriplesResult (count count) (ctx cur-ctx)))))
+
+  (fn parse-predicate-object-list-for-each-triple ((in arena Arena) (mut ctx TtlParseContext) (in subject Term) (in callback (Fn (Triple) Unit)))
+    (@intent "Parse predicate-object list and emit produced triples directly to a callback")
+    (@spec ((Arena TtlParseContext Term (Fn (Triple) Unit)) -> (Result StreamTriplesResult ParseError)))
+    (@alloc arena)
+    (let ((mut count 0)
+          (mut cur-ctx ctx)
+          (mut done false))
+      (while (not done)
+        (let ((s1 (skip-whitespace arena (. cur-ctx state)))
+              (c1 (state-peek s1)))
+          (if (or (== c1 46) (or (== c1 93) (or (== c1 0) (== c1 124))))
+            ;; trailing ; before terminator (. ] EOF |) - stop
+            (do
+              (set! cur-ctx (ctx-with-state cur-ctx s1))
+              (set! done true))
+            ;; parse predicate then object-list
+            (let ((pr (? (parse-term arena (ctx-with-state cur-ctx s1))))
+                  (olr (? (parse-object-list-for-each-triple arena (. pr ctx) subject (. pr term) callback))))
+              (do
+                (set! count (+ count (. olr count)))
+                (set! cur-ctx (. olr ctx))
+                (let ((s3 (skip-whitespace arena (. (. olr ctx) state))))
+                  (if (== (state-peek s3) 59)
+                    (set! cur-ctx (ctx-with-state cur-ctx (state-advance arena s3)))
+                    (set! done true))))))))
+      (ok (record-new StreamTriplesResult (count count) (ctx cur-ctx)))))
+
   ;; ---------------------------------------------------------------------------
   ;; Main parsing functions
   ;; ---------------------------------------------------------------------------
@@ -1094,6 +1170,37 @@
           (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))))
       (ok g)))
 
+  (fn parse-ttl-string-for-each-triple ((in arena Arena) (in input String) (in callback (Fn (Triple) Unit)))
+    (@intent "Parse a Turtle string and emit triples as they are parsed")
+    (@spec ((Arena String (Fn (Triple) Unit)) -> (Result (Int 0 ..) ParseError)))
+    (@alloc arena)
+    (@pre {(string-len input) > 0})
+    (let ((mut ctx (make-ttl-context arena input))
+          (mut count 0))
+      (let ((mut s (skip-whitespace arena (. ctx state))))
+        (set! ctx (ctx-with-state ctx s))
+        (while (not (state-at-end (. ctx state)))
+          (let ((c (state-peek (. ctx state))))
+            (cond
+              ;; @prefix or @base directive
+              ((== c 64)
+                (set! ctx (? (parse-directive arena ctx))))
+              ;; SPARQL-style PREFIX or BASE
+              ((or (== c 80) (== c 66))
+                (set! ctx (? (parse-sparql-prefix arena ctx))))
+              ;; Triple: subject predicate-object-list .
+              (else
+                (let ((sr (? (parse-term-extended arena ctx))))
+                  (do
+                    (set! count (+ count (emit-triples (. sr extra-triples) callback)))
+                    (let ((polr (? (parse-predicate-object-list-for-each-triple arena (. sr ctx) (. sr term) callback)))
+                          (s5 (? (expect-char arena (skip-whitespace arena (. (. polr ctx) state)) 46))))
+                      (do
+                        (set! count (+ count (. polr count)))
+                        (set! ctx (ctx-with-state (. polr ctx) s5)))))))))
+          (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))))
+      (ok count)))
+
   (fn parse-ttl-file ((in arena Arena) (in path String))
     (@intent "Parse a Turtle file into an RDF graph")
     (@spec ((Arena String) -> (Result Graph TtlFileError)))
@@ -1113,6 +1220,28 @@
                   (file-close (addr handle))
                   (match (parse-ttl-string arena text)
                     ((ok g) (ok g))
+                    ((error e) (error (union-new TtlFileError parse-error e))))))
+              ((error e)
+                (do
+                  (file-close (addr handle))
+                  (error (union-new TtlFileError file-error e)))))))
+        ((error e) (error (union-new TtlFileError file-error e))))))
+
+  (fn parse-ttl-file-for-each-triple ((in arena Arena) (in path String) (in callback (Fn (Triple) Unit)))
+    (@intent "Parse a Turtle file and emit triples as they are parsed")
+    (@spec ((Arena String (Fn (Triple) Unit)) -> (Result (Int 0 ..) TtlFileError)))
+    (@alloc arena)
+    (@pre {(string-len path) > 0})
+    (let ((f (file-open path 'read)))
+      (match f
+        ((ok handle)
+          (let ((content (file-read-all arena (addr handle))))
+            (match content
+              ((ok text)
+                (do
+                  (file-close (addr handle))
+                  (match (parse-ttl-string-for-each-triple arena text callback)
+                    ((ok count) (ok count))
                     ((error e) (error (union-new TtlFileError parse-error e))))))
               ((error e)
                 (do
