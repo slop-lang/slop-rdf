@@ -214,6 +214,11 @@
       (for-each (t src) (set! acc (graph-add-unchecked arena acc t)))
       acc))
 
+  (fn some-string ((in value String))
+    (@intent "Wrap a string in an Option String")
+    (@spec ((String) -> (Option String)))
+    (some value))
+
   ;; ---------------------------------------------------------------------------
   ;; IRI parsing
   ;; ---------------------------------------------------------------------------
@@ -231,6 +236,17 @@
       (let ((res (? (parse-until arena s1 62))))
         (ok (record-new TermResult
           (term (make-iri arena (. res result)))
+          (ctx (ctx-with-state ctx (. res state))))))))
+
+  (fn parse-iri-ref-string ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse an IRI reference enclosed in angle brackets and return its string")
+    (@spec ((Arena TtlParseContext) -> (Result StringResult ParseError)))
+    (@alloc arena)
+    (@pre {(state-peek ctx.state) == 60})
+    (let ((s1 (state-advance arena (. ctx state))))
+      (let ((res (? (parse-until arena s1 62))))
+        (ok (record-new StringResult
+          (value (. res result))
           (ctx (ctx-with-state ctx (. res state))))))))
 
   (fn parse-pn-local ((in arena Arena) (in state ParseState))
@@ -284,6 +300,26 @@
             ((some base-iri)
               (ok (record-new TermResult
                 (term (make-iri arena (string-concat arena base-iri (. local-result result))))
+                (ctx (ctx-with-state ctx (. local-result state))))))
+            ((none)
+              (error (make-parse-error arena 'unknown-prefix "Unknown prefix"
+                (record-new Position
+                  (line (. (. prefix-result state) line))
+                  (column (. (. prefix-result state) column))
+                  (offset (. (. prefix-result state) offset)))))))))))
+
+  (fn parse-prefixed-name-string ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a prefixed name and return the expanded IRI string")
+    (@spec ((Arena TtlParseContext) -> (Result StringResult ParseError)))
+    (@alloc arena)
+    (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars)))
+      (let ((s2 (? (expect-char arena (. prefix-result state) 58))))
+        (let ((local-result (parse-pn-local arena s2))
+              (lookup (prefix-map-lookup (. ctx prefixes) (. prefix-result result))))
+          (match lookup
+            ((some base-iri)
+              (ok (record-new StringResult
+                (value (string-concat arena base-iri (. local-result result)))
                 (ctx (ctx-with-state ctx (. local-result state))))))
             ((none)
               (error (make-parse-error arena 'unknown-prefix "Unknown prefix"
@@ -536,22 +572,18 @@
             (let ((s2 (state-advance arena (state-advance arena s))))
               (let ((dt-ctx (ctx-with-state (. sr ctx) s2)))
                 (if (== (state-peek s2) 60)
-                  (let ((ir (? (parse-iri-ref arena dt-ctx))))
-                    (match (. ir term)
-                      ((term-iri iri-val)
-                        (ok (record-new TermResult
-                          (term (make-literal arena val (some (. iri-val value)) (none)))
-                          (ctx (. ir ctx)))))
-                      (_ (error (make-parse-error arena 'syntax-error "Expected IRI for datatype"
-                          (record-new Position (line (. s2 line)) (column (. s2 column)) (offset (. s2 offset))))))))
-                  (let ((pr (? (parse-prefixed-name arena dt-ctx))))
-                    (match (. pr term)
-                      ((term-iri iri-val)
-                        (ok (record-new TermResult
-                          (term (make-literal arena val (some (. iri-val value)) (none)))
-                          (ctx (. pr ctx)))))
-                      (_ (error (make-parse-error arena 'syntax-error "Expected IRI for datatype"
-                          (record-new Position (line (. s2 line)) (column (. s2 column)) (offset (. s2 offset))))))))))))
+                  (let ((ir (? (parse-iri-ref-string arena dt-ctx))))
+                    (let ((datatype String (. ir value))
+                          (dt (some-string datatype)))
+                      (ok (record-new TermResult
+                        (term (make-literal arena val dt (none)))
+                        (ctx (. ir ctx))))))
+                  (let ((pr (? (parse-prefixed-name-string arena dt-ctx))))
+                    (let ((datatype String (. pr value))
+                          (dt (some-string datatype)))
+                      (ok (record-new TermResult
+                        (term (make-literal arena val dt (none)))
+                        (ctx (. pr ctx))))))))))
           ;; @ language tag
           ((== (state-peek s) 64)
             (let ((s2 (state-advance arena s)))
@@ -577,31 +609,46 @@
       ((TtlParseContext _ _ _ 0 (ParseState "3.14" 0 1 1)))
       ->
       (ok (record (term (term-literal (Literal "3.14" (some "http://www.w3.org/2001/XMLSchema#decimal") (none)))) (ctx ...))))
-    (let ((start (. (. ctx state) offset))
-          (mut s (. ctx state))
+    (let ((input (. (. ctx state) input))
+          (len (string-len (. (. ctx state) input)))
+          (start (. (. ctx state) offset))
+          (mut offset (. (. ctx state) offset))
+          (mut column (. (. ctx state) column))
           (mut has-dot false)
           (mut has-e false))
       ;; optional sign
-      (when (or (== (state-peek s) 43) (== (state-peek s) 45))
-        (set! s (state-advance arena s)))
+      (when (and (< offset len) (or (== (char-at input offset) 43) (== (char-at input offset) 45)))
+        (do
+          (set! offset (+ offset 1))
+          (set! column (+ column 1))))
       ;; integer digits
-      (let ((digits (parse-while arena s is-digit)))
-        (set! s (. digits state)))
+      (while (and (< offset len) (is-digit (char-at input offset)))
+        (do
+          (set! offset (+ offset 1))
+          (set! column (+ column 1))))
       ;; decimal point
-      (when (== (state-peek s) 46)
+      (when (and (< offset len) (== (char-at input offset) 46))
         (set! has-dot true)
-        (set! s (state-advance arena s))
-        (let ((frac (parse-while arena s is-digit)))
-          (set! s (. frac state))))
+        (set! offset (+ offset 1))
+        (set! column (+ column 1))
+        (while (and (< offset len) (is-digit (char-at input offset)))
+          (do
+            (set! offset (+ offset 1))
+            (set! column (+ column 1)))))
       ;; exponent
-      (when (or (== (state-peek s) 101) (== (state-peek s) 69))
+      (when (and (< offset len) (or (== (char-at input offset) 101) (== (char-at input offset) 69)))
         (set! has-e true)
-        (set! s (state-advance arena s))
-        (when (or (== (state-peek s) 43) (== (state-peek s) 45))
-          (set! s (state-advance arena s)))
-        (let ((exp-digits (parse-while arena s is-digit)))
-          (set! s (. exp-digits state))))
-      (let ((val (substring arena (. (. ctx state) input) start (- (. s offset) start)))
+        (set! offset (+ offset 1))
+        (set! column (+ column 1))
+        (when (and (< offset len) (or (== (char-at input offset) 43) (== (char-at input offset) 45)))
+          (do
+            (set! offset (+ offset 1))
+            (set! column (+ column 1))))
+        (while (and (< offset len) (is-digit (char-at input offset)))
+          (do
+            (set! offset (+ offset 1))
+            (set! column (+ column 1)))))
+      (let ((val (substring arena input start (- offset start)))
             (dt (cond
                   (has-e "http://www.w3.org/2001/XMLSchema#double")
                   (has-dot "http://www.w3.org/2001/XMLSchema#decimal")
@@ -613,7 +660,11 @@
             (base-iri (. ctx base-iri))
             (blank-labels (. ctx blank-labels))
             (blank-counter (. ctx blank-counter))
-            (state s))))))))
+            (state (record-new ParseState
+              (input input)
+              (offset offset)
+              (line (. (. ctx state) line))
+              (column column))))))))))
 
   (fn parse-boolean-literal ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a boolean literal (true or false)")

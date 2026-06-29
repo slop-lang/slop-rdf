@@ -1,0 +1,21 @@
+(module bench-parse-meteorites
+  (@doc "Executable benchmark for parsing the large meteorites Turtle graph")
+
+  (import rdf (graph-size))
+  (import ttl (parse-ttl-file))
+
+  (fn main ()
+    (@intent "Parse test_data/meteorites.ttl and print the resulting graph size")
+    (@spec (() -> Int))
+    ;; Start with 64MB; benchmark builds should use --no-arena-cap so the arena
+    ;; can grow for large graphs without hitting the default 256MB global cap.
+    (with-arena 67108864
+      (match (parse-ttl-file arena "test_data/meteorites.ttl")
+        ((ok g)
+          (do
+            (println (string-concat arena "triples: " (int-to-string arena (graph-size g))))
+            0))
+        ((error e)
+          (do
+            (println "parse failed")
+            1))))))

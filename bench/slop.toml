@@ -1,0 +1,10 @@
+[project]
+name = "slop-rdf-bench"
+version = "0.1.0"
+entry = "parse-meteorites.slop"
+
+[build]
+output = "../build/parse_meteorites"
+include = ["../src", "../src/parse"]
+type = "executable"
+debug = false
