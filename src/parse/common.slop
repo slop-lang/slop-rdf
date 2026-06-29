@@ -135,6 +135,19 @@
           (line (. state line))
           (column (+ (. state column) 1))))))
 
+  (fn state-with-position ((in state ParseState)
+                           (in offset (Int 0 ..))
+                           (in line (Int 1 ..))
+                           (in column (Int 1 ..)))
+    (@intent "Create a parse state for the same input at a known position")
+    (@spec ((ParseState (Int 0 ..) (Int 1 ..) (Int 1 ..)) -> ParseState))
+    (@pure)
+    (record-new ParseState
+      (input (. state input))
+      (offset offset)
+      (line line)
+      (column column)))
+
   ;; ---------------------------------------------------------------------------
   ;; Whitespace and comment handling
   ;; ---------------------------------------------------------------------------
@@ -144,24 +157,52 @@
     (@spec ((Arena ParseState) -> ParseState))
     (@alloc arena)
     (@post (or (state-at-end $result) (not (is-space (state-peek $result)))))
-    (let ((mut s state))
-      (while (and (not (state-at-end s))
-                  (or (is-space (state-peek s)) (== (state-peek s) 35)))
-        (if (== (state-peek s) 35)
-          (set! s (skip-line arena s))
-          (set! s (state-advance arena s))))
-      s))
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (mut offset (. state offset))
+          (mut line (. state line))
+          (mut column (. state column))
+          (mut done false))
+      (while (and (not done) (< offset len))
+        (let ((c (char-at input offset)))
+          (cond
+            ((== c 35)
+              (do
+                (while (and (< offset len) (!= (char-at input offset) 10))
+                  (do
+                    (set! offset (+ offset 1))
+                    (set! column (+ column 1))))
+                (when (< offset len)
+                  (do
+                    (set! offset (+ offset 1))
+                    (set! line (+ line 1))
+                    (set! column 1)))))
+            ((is-space c)
+              (do
+                (set! offset (+ offset 1))
+                (if (== c 10)
+                  (do
+                    (set! line (+ line 1))
+                    (set! column 1))
+                  (set! column (+ column 1)))))
+            (else (set! done true)))))
+      (state-with-position state offset line column)))
 
   (fn skip-line ((in arena Arena) (mut state ParseState))
     (@intent "Skip to end of current line (for comment handling)")
     (@spec ((Arena ParseState) -> ParseState))
     (@alloc arena)
-    (let ((mut s state))
-      (while (and (not (state-at-end s)) (!= (state-peek s) 10))
-        (set! s (state-advance arena s)))
-      (if (not (state-at-end s))
-        (state-advance arena s)
-        s)))
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (mut offset (. state offset))
+          (mut column (. state column)))
+      (while (and (< offset len) (!= (char-at input offset) 10))
+        (do
+          (set! offset (+ offset 1))
+          (set! column (+ column 1))))
+      (if (< offset len)
+        (state-with-position state (+ offset 1) (+ (. state line) 1) 1)
+        (state-with-position state offset (. state line) column))))
 
   ;; ---------------------------------------------------------------------------
   ;; Character expectations
@@ -188,26 +229,56 @@
     (@intent "Parse characters while predicate returns true, return collected string")
     (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> ParseWhileResult))
     (@alloc arena)
-    (let ((start (. state offset))
-          (mut s state))
-      (while (and (not (state-at-end s)) (predicate (state-peek s)))
-        (set! s (state-advance arena s)))
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (start (. state offset))
+          (mut offset (. state offset))
+          (mut line (. state line))
+          (mut column (. state column)))
+      (while (and (< offset len) (predicate (char-at input offset)))
+        (let ((c (char-at input offset)))
+          (do
+            (set! offset (+ offset 1))
+            (if (== c 10)
+              (do
+                (set! line (+ line 1))
+                (set! column 1))
+              (set! column (+ column 1))))))
       (record-new ParseWhileResult
-        (result (substring arena (. state input) start (- (. s offset) start)))
-        (state s))))
+        (result (substring arena input start (- offset start)))
+        (state (state-with-position state offset line column)))))
 
   (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
     (@intent "Parse characters until terminator is found")
     (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseWhileResult ParseError)))
     (@alloc arena)
-    (let ((start (. state offset))
-          (mut s state))
-      (while (and (not (state-at-end s)) (!= (state-peek s) terminator))
-        (set! s (state-advance arena s)))
-      (if (state-at-end s)
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (start (. state offset))
+          (mut offset (. state offset))
+          (mut line (. state line))
+          (mut column (. state column)))
+      (while (and (< offset len) (!= (char-at input offset) terminator))
+        (let ((c (char-at input offset)))
+          (do
+            (set! offset (+ offset 1))
+            (if (== c 10)
+              (do
+                (set! line (+ line 1))
+                (set! column 1))
+              (set! column (+ column 1))))))
+      (if (>= offset len)
         (error (make-parse-error arena 'unexpected-eof "Unexpected end of input"
-          (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset)))))
-        (ok (record-new ParseWhileResult
-          (result (substring arena (. state input) start (- (. s offset) start)))
-          (state (state-advance arena s))))))))
-
+          (record-new Position (line line) (column column) (offset offset))))
+        (let ((end offset)
+              (c (char-at input offset)))
+          (do
+            (set! offset (+ offset 1))
+            (if (== c 10)
+              (do
+                (set! line (+ line 1))
+                (set! column 1))
+              (set! column (+ column 1)))
+            (ok (record-new ParseWhileResult
+              (result (substring arena input start (- end start)))
+              (state (state-with-position state offset line column))))))))))
