@@ -102,6 +102,8 @@
     (@intent "Peek at current character without consuming, returns 0 at end")
     (@spec ((ParseState) -> (Int 0 .. 127)))
     (@pure)
+    (@post (or (state-at-end state) {$result == (char-at (. state input) (. state offset))}))
+    (@post (or (not (state-at-end state)) {$result == 0}))
     (@example ((ParseState "abc" 0 1 1)) -> 97)
     (@example ((ParseState "abc" 3 1 4)) -> 0)
     (if (state-at-end state) 0 (char-at (. state input) (. state offset))))
@@ -142,6 +144,10 @@
     (@intent "Create a parse state for the same input at a known position")
     (@spec ((ParseState (Int 0 ..) (Int 1 ..) (Int 1 ..)) -> ParseState))
     (@pure)
+    (@post {$result.input == state.input})
+    (@post {$result.offset == offset})
+    (@post {$result.line == line})
+    (@post {$result.column == column})
     (record-new ParseState
       (input (. state input))
       (offset offset)
@@ -164,6 +170,7 @@
           (mut column (. state column))
           (mut done false))
       (while (and (not done) (< offset len))
+        (@loop-invariant (or (not done) (not (is-space (char-at input offset)))))
         (let ((c (char-at input offset)))
           (cond
             ((== c 35)

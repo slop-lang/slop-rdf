@@ -911,7 +911,7 @@
     (@spec ((Arena TtlParseContext) -> (Result TripleResult ParseError)))
     (@alloc arena)
     (@example
-      ((TtlParseContext prefixes _ _ 0 (ParseState "<http://s> <http://p> <http://o> ." 0 1 1)))
+      ((TtlParseContext _ _ _ 0 (ParseState "<http://s> <http://p> <http://o> ." 0 1 1)))
       ->
       (ok (record
         (triple (Triple (term-iri (IRI "http://s")) (term-iri (IRI "http://p")) (term-iri (IRI "http://o"))))

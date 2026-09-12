@@ -287,7 +287,7 @@
     (@spec ((Arena N3ParseContext N3Term) -> (Result N3TermResult ParseError)))
     (@alloc arena)
     (@example
-      ((N3ParseContext ... (ParseState "!:name" 0 1 1)) (n3-rdf (term-iri (IRI "http://example.org/person"))))
+      ((N3ParseContext (TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "" "http://example.org/")) 1) _ _ 0 (ParseState "!:name" 0 1 1)) 0 false (none)) (n3-rdf (term-iri (IRI "http://example.org/person"))))
       ->
       (ok (record (term ...) (ctx ...))))
     (let ((op (state-peek (. (. ctx ttl-ctx) state))))

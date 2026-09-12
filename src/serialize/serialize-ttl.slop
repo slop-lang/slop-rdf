@@ -282,7 +282,12 @@
     (let ((s (serialize-term arena (. (deref tt) subject) prefixes))
           (p (serialize-term arena (. (deref tt) predicate) prefixes))
           (o (serialize-term arena (. (deref tt) object) prefixes)))
-      (string-build arena (list String "<<( " s " " p " " o " )>>"))))
+      (string-concat arena "<<( "
+        (string-concat arena s
+          (string-concat arena " "
+            (string-concat arena p
+              (string-concat arena " "
+                (string-concat arena o " )>>"))))))))
 
   ;; ---------------------------------------------------------------------------
   ;; Prefix / base declarations
