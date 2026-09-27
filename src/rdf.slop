@@ -290,7 +290,7 @@
     :c-name
     "rdf_make_graph")
 
-  (fn graph-add ((in arena Arena) (in g Graph) (in t Triple))
+  (fn graph-add ((in arena Arena) (mut g Graph) (in t Triple))
     (@intent "Add a triple to the graph, returns new graph")
     (@spec ((Arena Graph Triple) -> Graph))
     (@alloc arena)
@@ -305,7 +305,7 @@
     :c-name
     "rdf_graph_add")
 
-  (fn graph-add-unchecked ((in arena Arena) (in g Graph) (in t Triple))
+  (fn graph-add-unchecked ((in arena Arena) (mut g Graph) (in t Triple))
     (@intent "Add a triple to the graph without duplicate checking")
     (@spec ((Arena Graph Triple) -> Graph))
     (@alloc arena)
