@@ -57,6 +57,7 @@
     (@intent "Create an IRI term from a string")
     (@spec ((Arena String) -> Term))
     (@alloc arena)
+    (@pure)
     (@pre (> (string-len value) 0))
     (@post (match $result ((term-iri _) true) (_ false)))
     (@example
@@ -72,6 +73,7 @@
     (@intent "Create a blank node with given ID")
     (@spec ((Arena BlankNodeId) -> Term))
     (@alloc arena)
+    (@pure)
     (@pre (>= id 0))
     (@post (match $result ((term-blank _) true) (_ false)))
     (@example (0) -> (term-blank (BlankNode 0)))
@@ -84,6 +86,7 @@
     (@intent "Create a literal with optional datatype and language tag")
     (@spec ((Arena String (Option String) (Option String)) -> Term))
     (@alloc arena)
+    (@pure)
     (@pre (>= (string-len value) 0))
     (@post (match $result ((term-literal _) true) (_ false)))
     (@example
@@ -225,6 +228,7 @@
     (@intent "Construct a triple from three terms")
     (@spec ((Arena Term Term Term) -> Triple))
     (@alloc arena)
+    (@pure)
     (@post
       (and
         (term-eq (triple-subject $result) subject)
