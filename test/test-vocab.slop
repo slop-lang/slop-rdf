@@ -6,6 +6,13 @@
     (RDF_TYPE RDF_FIRST RDF_REST RDF_NIL
      RDFS_LABEL RDFS_CLASS RDFS_SUBCLASS_OF
      OWL_SAME_AS OWL_CLASS OWL_THING
+     RDF_LANG_RANGE
+     OWL_AXIOM OWL_ANNOTATION OWL_ANNOTATED_SOURCE OWL_ANNOTATED_PROPERTY OWL_ANNOTATED_TARGET
+     OWL_DISJOINT_UNION_OF OWL_ON_PROPERTIES
+     OWL_TOP_OBJECT_PROPERTY OWL_BOTTOM_OBJECT_PROPERTY OWL_TOP_DATA_PROPERTY OWL_BOTTOM_DATA_PROPERTY
+     OWL_REAL OWL_RATIONAL
+     OWL_DATA_RANGE OWL_DEPRECATED_CLASS OWL_DEPRECATED_PROPERTY OWL_ONTOLOGY_PROPERTY
+     SWRL_NS SWRL_IMP SWRL_BODY SWRL_HEAD
      FOAF_PERSON FOAF_NAME FOAF_KNOWS FOAF_MBOX
      XSD_STRING XSD_INTEGER))
   (import test-utils (TestState test-state-new assert-true assert-false assert-eq-int test-summary))
@@ -60,6 +67,32 @@
           (term-eq owl-class (make-iri arena "http://www.w3.org/2002/07/owl#Class"))))
         (set! s (assert-true arena s "OWL_THING IRI is valid"
           (term-eq owl-thing (make-iri arena "http://www.w3.org/2002/07/owl#Thing")))))
+
+      ;; OWL 2 reserved vocabulary and SWRL, each against the IRI its spec gives
+      (println "")
+      (println "-- OWL 2 Reserved and SWRL Vocabulary --")
+      (set! s (assert-true arena s "RDF_LANG_RANGE IRI is valid" (string-eq RDF_LANG_RANGE "http://www.w3.org/1999/02/22-rdf-syntax-ns#langRange")))
+      (set! s (assert-true arena s "OWL_AXIOM IRI is valid" (string-eq OWL_AXIOM "http://www.w3.org/2002/07/owl#Axiom")))
+      (set! s (assert-true arena s "OWL_ANNOTATION IRI is valid" (string-eq OWL_ANNOTATION "http://www.w3.org/2002/07/owl#Annotation")))
+      (set! s (assert-true arena s "OWL_ANNOTATED_SOURCE IRI is valid" (string-eq OWL_ANNOTATED_SOURCE "http://www.w3.org/2002/07/owl#annotatedSource")))
+      (set! s (assert-true arena s "OWL_ANNOTATED_PROPERTY IRI is valid" (string-eq OWL_ANNOTATED_PROPERTY "http://www.w3.org/2002/07/owl#annotatedProperty")))
+      (set! s (assert-true arena s "OWL_ANNOTATED_TARGET IRI is valid" (string-eq OWL_ANNOTATED_TARGET "http://www.w3.org/2002/07/owl#annotatedTarget")))
+      (set! s (assert-true arena s "OWL_DISJOINT_UNION_OF IRI is valid" (string-eq OWL_DISJOINT_UNION_OF "http://www.w3.org/2002/07/owl#disjointUnionOf")))
+      (set! s (assert-true arena s "OWL_ON_PROPERTIES IRI is valid" (string-eq OWL_ON_PROPERTIES "http://www.w3.org/2002/07/owl#onProperties")))
+      (set! s (assert-true arena s "OWL_TOP_OBJECT_PROPERTY IRI is valid" (string-eq OWL_TOP_OBJECT_PROPERTY "http://www.w3.org/2002/07/owl#topObjectProperty")))
+      (set! s (assert-true arena s "OWL_BOTTOM_OBJECT_PROPERTY IRI is valid" (string-eq OWL_BOTTOM_OBJECT_PROPERTY "http://www.w3.org/2002/07/owl#bottomObjectProperty")))
+      (set! s (assert-true arena s "OWL_TOP_DATA_PROPERTY IRI is valid" (string-eq OWL_TOP_DATA_PROPERTY "http://www.w3.org/2002/07/owl#topDataProperty")))
+      (set! s (assert-true arena s "OWL_BOTTOM_DATA_PROPERTY IRI is valid" (string-eq OWL_BOTTOM_DATA_PROPERTY "http://www.w3.org/2002/07/owl#bottomDataProperty")))
+      (set! s (assert-true arena s "OWL_REAL IRI is valid" (string-eq OWL_REAL "http://www.w3.org/2002/07/owl#real")))
+      (set! s (assert-true arena s "OWL_RATIONAL IRI is valid" (string-eq OWL_RATIONAL "http://www.w3.org/2002/07/owl#rational")))
+      (set! s (assert-true arena s "OWL_DATA_RANGE IRI is valid" (string-eq OWL_DATA_RANGE "http://www.w3.org/2002/07/owl#DataRange")))
+      (set! s (assert-true arena s "OWL_DEPRECATED_CLASS IRI is valid" (string-eq OWL_DEPRECATED_CLASS "http://www.w3.org/2002/07/owl#DeprecatedClass")))
+      (set! s (assert-true arena s "OWL_DEPRECATED_PROPERTY IRI is valid" (string-eq OWL_DEPRECATED_PROPERTY "http://www.w3.org/2002/07/owl#DeprecatedProperty")))
+      (set! s (assert-true arena s "OWL_ONTOLOGY_PROPERTY IRI is valid" (string-eq OWL_ONTOLOGY_PROPERTY "http://www.w3.org/2002/07/owl#OntologyProperty")))
+      (set! s (assert-true arena s "SWRL_NS IRI is valid" (string-eq SWRL_NS "http://www.w3.org/2003/11/swrl#")))
+      (set! s (assert-true arena s "SWRL_IMP IRI is valid" (string-eq SWRL_IMP "http://www.w3.org/2003/11/swrl#Imp")))
+      (set! s (assert-true arena s "SWRL_BODY IRI is valid" (string-eq SWRL_BODY "http://www.w3.org/2003/11/swrl#body")))
+      (set! s (assert-true arena s "SWRL_HEAD IRI is valid" (string-eq SWRL_HEAD "http://www.w3.org/2003/11/swrl#head")))
 
       ;; Test FOAF vocabulary
       (println "")
