@@ -1,0 +1,100 @@
+(module bench-parse-stream
+  (@doc "Parse-only benchmark: stream a Turtle file through a callback that only hashes each triple")
+
+  ;; Build from bench/:  slop build parse-stream.slop --no-arena-cap -O3 -o ../build/parse_stream
+  ;; Run:  /usr/bin/time -l ../build/parse_stream FILE.ttl      count + order-sensitive hash
+  ;;       /usr/bin/time -l ../build/parse_stream FILE.ttl x    no-op callback, for timing
+  ;; The hash covers every term's kind, text and blank id in arrival order,
+  ;; so two parser builds that print the same count and hash delivered the
+  ;; same triples in the same order with the same blank node ids.
+
+  (import rdf (Term Triple))
+  (import ttl (parse-ttl-file-for-each-triple))
+
+  (ffi "string.h"
+    (strlen ((s (Ptr U8))) U64))
+
+  ;; Hash modulus 2^55 keeps (* h 31) inside an Int.
+  (const HASH_MOD Int 36028797018963968)
+
+  (fn argv-to-string ((argv (Ptr (Ptr U8))) (index Int))
+    (@intent "Convert argv[index] to a SLOP String")
+    (@spec (((Ptr (Ptr U8)) Int) -> String))
+    (let ((ptr (@ argv index)))
+      (String ptr (strlen ptr))))
+
+  (fn hash-int ((h Int) (n Int))
+    (@intent "Fold one integer into an order-sensitive hash")
+    (@spec ((Int Int) -> Int))
+    (@pure)
+    (% (+ (* h 31) (% n 1000003)) HASH_MOD))
+
+  (fn hash-str ((h Int) (s String))
+    (@intent "Fold a string's length and bytes into an order-sensitive hash")
+    (@spec ((Int String) -> Int))
+    (@pure)
+    (let ((len (cast Int (. s len)))
+          (mut acc (hash-int h (cast Int (. s len))))
+          (mut i 0))
+      (while (< i len)
+        (do
+          (set! acc (hash-int acc (cast Int (@ (. s data) i))))
+          (set! i (+ i 1))))
+      acc))
+
+  (fn hash-opt ((h Int) (o (Option String)))
+    (@intent "Fold an optional string into an order-sensitive hash")
+    (@spec ((Int (Option String)) -> Int))
+    (@pure)
+    (match o
+      ((some s) (hash-str (hash-int h 1) s))
+      ((none) (hash-int h 0))))
+
+  (fn hash-term ((h Int) (t Term))
+    (@intent "Fold a term's kind and content, including blank ids, into an order-sensitive hash")
+    (@spec ((Int Term) -> Int))
+    (@pure)
+    (match t
+      ((term-iri iri) (hash-str (hash-int h 1) (. iri value)))
+      ((term-blank b) (hash-int (hash-int h 2) (. b id)))
+      ((term-literal lit)
+        (hash-opt (hash-opt (hash-str (hash-int h 3) (. lit value)) (. lit datatype)) (. lit lang)))
+      ((term-triple p) (hash-triple (hash-int h 4) (deref p)))))
+
+  (fn hash-triple ((h Int) (t Triple))
+    (@intent "Fold a triple's three terms into an order-sensitive hash")
+    (@spec ((Int Triple) -> Int))
+    (@pure)
+    (hash-term (hash-term (hash-term h (. t subject)) (. t predicate)) (. t object)))
+
+  (fn main ((argc Int) (argv (Ptr (Ptr U8))))
+    (@intent "Stream the Turtle file named by argv[1] and print its triple count, hash (unless argv[2] is given), and parse time")
+    (@spec ((Int (Ptr (Ptr U8))) -> Int))
+    (if (< argc 2)
+      (do
+        (println "usage: parse_stream FILE.ttl")
+        2)
+      (with-arena 65536
+        (let ((path (argv-to-string argv 1))
+              (parse (arena-new 16777216))
+              (mut h 0)
+              (t0 (now-ms))
+              (res (if (>= argc 3)
+                     ;; any second argument: a no-op callback, for timing the parser alone
+                     (parse-ttl-file-for-each-triple parse path (fn ((t Triple)) (do)))
+                     (parse-ttl-file-for-each-triple parse path
+                       (fn ((t Triple)) (set! h (hash-triple h t))))))
+              (t1 (now-ms)))
+          (do
+            (arena-free parse)
+            (match res
+              ((ok n)
+                (do
+                  (println (string-concat arena "triples=" (int-to-string arena n)))
+                  (println (string-concat arena "hash=" (int-to-string arena h)))
+                  (println (string-concat arena "parse_ms=" (int-to-string arena (- t1 t0))))
+                  0))
+              ((error e)
+                (do
+                  (println "parse failed")
+                  1)))))))))

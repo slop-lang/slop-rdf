@@ -6,6 +6,7 @@
     PrefixBinding
     TtlParseContext
     BlankLabelBinding
+    BlankLabelTable
     TtlFileError
     is-pn-chars-base
     is-pn-chars
@@ -31,6 +32,9 @@
   (import file (file-open file-read-all file-close FileMode FileError))
   (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum))
 
+  (ffi "string.h"
+    (memcpy ((dest (Ptr Void)) (src (Ptr Void)) (n U64)) (Ptr Void)))
+
   ;; ---------------------------------------------------------------------------
   ;; Types
   ;; ---------------------------------------------------------------------------
@@ -49,6 +53,14 @@
     (label String)
     (id (Int 0 ..))))
 
+  ;; Blank-node label -> id for one document. The map and its key strings
+  ;; live in `arena`, the parse's long-lived arena, even while a statement
+  ;; is being parsed in a scratch arena: new labels go through
+  ;; `blank-labels-add`, whose `arena` is this one.
+  (type BlankLabelTable (record
+    (arena Arena)
+    (ids (Map String (Int 0 ..)))))
+
   (type GenBlankResult (record
     (id (Int 0 ..))
     (ctx TtlParseContext)))
@@ -60,6 +72,14 @@
   (type StringResult (record
     (value String)
     (ctx TtlParseContext)))
+
+  ;; A scanned string-literal body: `end` is the offset of the closing
+  ;; quote, `escapes` the number of backslash escapes, `state` the parse
+  ;; state after the closing quote(s).
+  (type StringScan (record
+    (end (Int 0 ..))
+    (escapes (Int 0 ..))
+    (state ParseState)))
 
   (type EscapeResult (record
     (char (Int 0 .. 127))
@@ -93,7 +113,7 @@
   (type TtlParseContext (record
     (prefixes PrefixMap)
     (base-iri (Option String))
-    (blank-labels (List BlankLabelBinding))
+    (blank-labels BlankLabelTable)
     (blank-counter BlankNodeCounter)
     (state ParseState)))
 
@@ -140,15 +160,14 @@
           (set! result (some (. b iri)))))
       result))
 
-  (fn blank-label-lookup ((in labels (List BlankLabelBinding)) (in label String))
-    (@intent "Look up blank node ID for a given label")
-    (@spec (((List BlankLabelBinding) String) -> (Option (Int 0 ..))))
-    (@pure)
-    (let ((mut result (Option (Int 0 ..)) (none)))
-      (for-each (b labels)
-        (when (string-eq (. b label) label)
-          (set! result (some (. b id)))))
-      result))
+  (fn blank-labels-add ((in arena Arena) (in ids (Map String (Int 0 ..))) (in label String) (in id (Int 0 ..)))
+    (@intent "Bind a new blank node label to its id, copying the label into the table's arena")
+    (@spec ((Arena (Map String (Int 0 ..)) String (Int 0 ..)) -> Unit))
+    (@alloc arena)
+    ;; Called with the table's own arena, never a statement's scratch arena:
+    ;; map-put grows the map into the arena named `arena`, and the map keeps
+    ;; only the key's header, so the key's bytes must live as long as it.
+    (map-put ids (substring arena label 0 (string-len label)) id))
 
   ;; ---------------------------------------------------------------------------
   ;; Context management
@@ -166,7 +185,9 @@
     (record-new TtlParseContext
       (prefixes (make-prefix-map arena))
       (base-iri (none))
-      (blank-labels (list-new arena BlankLabelBinding))
+      (blank-labels (record-new BlankLabelTable
+        (arena arena)
+        (ids (map-new arena String (Int 0 ..)))))
       (blank-counter 0)
       (state (make-parse-state arena input))))
 
@@ -225,6 +246,44 @@
     (@spec ((String) -> (Option String)))
     (some value))
 
+  (fn input-slice ((in input String) (in start (Int 0 ..)) (in len (Int 0 ..)))
+    (@intent "A view of len bytes of input from start, sharing input's bytes without copying")
+    (@spec ((String (Int 0 ..) (Int 0 ..)) -> String))
+    (@pure)
+    ;; Only for transient use - lookup keys - since it lives exactly as
+    ;; long as the input does.
+    (String (+ (. input data) start) (cast U64 len)))
+
+  (fn scan-pn-chars ((in state ParseState))
+    (@intent "Advance over prefix/label name characters without collecting them")
+    (@spec ((ParseState) -> ParseState))
+    (@pure)
+    ;; is-pn-chars never matches a newline, so only the column moves.
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (mut offset (. state offset)))
+      (while (and (< offset len) (is-pn-chars (char-at input offset)))
+        (set! offset (+ offset 1)))
+      (record-new ParseState
+        (input input)
+        (offset offset)
+        (line (. state line))
+        (column (+ (. state column) (- offset (. state offset)))))))
+
+  (fn concat-base-slice ((in arena Arena) (in base String) (in input String) (in start (Int 0 ..)) (in len (Int 0 ..)))
+    (@intent "Concatenate base with len bytes of input from start, in a single allocation")
+    (@spec ((Arena String String (Int 0 ..) (Int 0 ..)) -> String))
+    (@alloc arena)
+    (let ((blen (cast Int (. base len)))
+          (total (+ blen len))
+          (buf (arena-alloc arena (+ total 1))))
+      (do
+        (when (> blen 0)
+          (memcpy (cast (Ptr Void) buf) (cast (Ptr Void) (. base data)) (cast U64 blen)))
+        (when (> len 0)
+          (memcpy (cast (Ptr Void) (+ buf blen)) (cast (Ptr Void) (+ (. input data) start)) (cast U64 len)))
+        (String (cast (Ptr U8) buf) (cast U64 total)))))
+
   ;; ---------------------------------------------------------------------------
   ;; IRI parsing
   ;; ---------------------------------------------------------------------------
@@ -255,12 +314,11 @@
           (value (. res result))
           (ctx (ctx-with-state ctx (. res state))))))))
 
-  (fn parse-pn-local ((in arena Arena) (in state ParseState))
-    (@intent "Parse local part of prefixed name, allowing dots that aren't the last char")
-    (@spec ((Arena ParseState) -> ParseWhileResult))
-    (@alloc arena)
-    (let ((start (. state offset))
-          (len (string-len (. state input)))
+  (fn scan-pn-local ((in state ParseState))
+    (@intent "Advance over the local part of a prefixed name, allowing dots that aren't the last char")
+    (@spec ((ParseState) -> ParseState))
+    (@pure)
+    (let ((len (string-len (. state input)))
           (mut offset (. state offset))
           (mut column (. state column))
           (mut done false))
@@ -281,13 +339,11 @@
                       (set! column (+ column 2)))
                     (set! done true))))
               (else (set! done true))))))
-      (record-new ParseWhileResult
-        (result (substring arena (. state input) start (- offset start)))
-        (state (record-new ParseState
-          (input (. state input))
-          (offset offset)
-          (line (. state line))
-          (column column))))))
+      (record-new ParseState
+        (input (. state input))
+        (offset offset)
+        (line (. state line))
+        (column column))))
 
   (fn parse-prefixed-name ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a prefixed name (prefix:localname) and expand to full IRI")
@@ -297,42 +353,35 @@
       ((TtlParseContext (PrefixMap (list PrefixBinding (PrefixBinding "ex" "http://example.org/")) 1) _ _ 0 (ParseState "ex:foo" 0 1 1)))
       ->
       (ok (record (term (term-iri (IRI "http://example.org/foo"))) (ctx ...))))
-    (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars)))
-      (let ((s2 (? (expect-char arena (. prefix-result state) 58))))
-        ;; Parse local part: pn-chars with embedded dots (dots allowed except as last char)
-        (let ((local-result (parse-pn-local arena s2))
-              (lookup (prefix-map-lookup (. ctx prefixes) (. prefix-result result))))
-          (match lookup
-            ((some base-iri)
-              (ok (record-new TermResult
-                (term (make-iri arena (string-concat arena base-iri (. local-result result))))
-                (ctx (ctx-with-state ctx (. local-result state))))))
-            ((none)
-              (error (make-parse-error arena 'unknown-prefix "Unknown prefix"
-                (record-new Position
-                  (line (. (. prefix-result state) line))
-                  (column (. (. prefix-result state) column))
-                  (offset (. (. prefix-result state) offset)))))))))))
+    (let ((pr (? (parse-prefixed-name-string arena ctx))))
+      (ok (record-new TermResult
+        (term (make-iri arena (. pr value)))
+        (ctx (. pr ctx))))))
 
   (fn parse-prefixed-name-string ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a prefixed name and return the expanded IRI string")
     (@spec ((Arena TtlParseContext) -> (Result StringResult ParseError)))
     (@alloc arena)
-    (let ((prefix-result (parse-while arena (. ctx state) is-pn-chars)))
-      (let ((s2 (? (expect-char arena (. prefix-result state) 58))))
-        (let ((local-result (parse-pn-local arena s2))
-              (lookup (prefix-map-lookup (. ctx prefixes) (. prefix-result result))))
-          (match lookup
-            ((some base-iri)
-              (ok (record-new StringResult
-                (value (string-concat arena base-iri (. local-result result)))
-                (ctx (ctx-with-state ctx (. local-result state))))))
-            ((none)
-              (error (make-parse-error arena 'unknown-prefix "Unknown prefix"
-                (record-new Position
-                  (line (. (. prefix-result state) line))
-                  (column (. (. prefix-result state) column))
-                  (offset (. (. prefix-result state) offset)))))))))))
+    ;; The prefix is looked up through a view of the input and the IRI is
+    ;; built straight from the input, so this allocates only the IRI.
+    (let ((s0 (. ctx state))
+          (s1 (scan-pn-chars s0))
+          (s2 (? (expect-char arena s1 58)))
+          (s3 (scan-pn-local s2))
+          (input (. s0 input))
+          (lookup (prefix-map-lookup (. ctx prefixes)
+                    (input-slice input (. s0 offset) (- (. s1 offset) (. s0 offset))))))
+      (match lookup
+        ((some base-iri)
+          (ok (record-new StringResult
+            (value (concat-base-slice arena base-iri input (. s2 offset) (- (. s3 offset) (. s2 offset))))
+            (ctx (ctx-with-state ctx s3)))))
+        ((none)
+          (error (make-parse-error arena 'unknown-prefix "Unknown prefix"
+            (record-new Position
+              (line (. s1 line))
+              (column (. s1 column))
+              (offset (. s1 offset)))))))))
 
   ;; ---------------------------------------------------------------------------
   ;; Blank node parsing
@@ -361,36 +410,27 @@
                       (term bnode)
                       (extra-triples (. polr triples))
                       (ctx (ctx-with-state (. polr ctx) s5))))))))))
-        ;; _:label syntax — reuse same blank node ID for same label
-        (let ((s3 (? (expect-char arena (state-advance arena (. ctx state)) 58))))
-          (let ((label-result (parse-while arena s3 is-pn-chars)))
-            (let ((label-str (. label-result result))
-                  (existing (blank-label-lookup (. ctx blank-labels) (. label-result result))))
-              (match existing
-                ((some existing-id)
-                  ;; reuse existing blank node ID for this label
+        ;; _:label syntax — reuse same blank node ID for same label. The label
+        ;; is looked up through a view of the input; only a new label is
+        ;; copied, into the table's long-lived arena.
+        (let ((s3 (? (expect-char arena (state-advance arena (. ctx state)) 58)))
+              (s4 (scan-pn-chars s3))
+              (label (input-slice (. s3 input) (. s3 offset) (- (. s4 offset) (. s3 offset))))
+              (tbl (. ctx blank-labels)))
+          (match (map-get (. tbl ids) label)
+            ((some existing-id)
+              (ok (record-new TermTriplesResult
+                (term (make-blank arena existing-id))
+                (extra-triples (list-new arena Triple))
+                (ctx (ctx-with-state ctx s4)))))
+            ((none)
+              (let ((gen (context-gen-blank-id arena ctx)))
+                (do
+                  (blank-labels-add (. tbl arena) (. tbl ids) label (. gen id))
                   (ok (record-new TermTriplesResult
-                    (term (make-blank arena existing-id))
+                    (term (make-blank arena (. gen id)))
                     (extra-triples (list-new arena Triple))
-                    (ctx (ctx-with-state ctx (. label-result state))))))
-                ((none)
-                  ;; new label — generate a fresh ID, record it, and thread the
-                  ;; updated label list forward. list-push on the struct field
-                  ;; (. ctx blank-labels) mutates a by-value copy and would drop the
-                  ;; binding, so bind the list to a mutable local and store it back.
-                  (let ((gen (context-gen-blank-id arena ctx))
-                        (mut labels (. ctx blank-labels)))
-                    (list-push labels
-                      (record-new BlankLabelBinding (label label-str) (id (. gen id))))
-                    (ok (record-new TermTriplesResult
-                      (term (make-blank arena (. gen id)))
-                      (extra-triples (list-new arena Triple))
-                      (ctx (record-new TtlParseContext
-                        (prefixes (. ctx prefixes))
-                        (base-iri (. ctx base-iri))
-                        (blank-labels labels)
-                        (blank-counter (. (. gen ctx) blank-counter))
-                        (state (. label-result state)))))))))))))))
+                    (ctx (ctx-with-state (. gen ctx) s4))))))))))))
 
   (fn parse-blank-node ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a blank node, returning TermResult for backward compat")
@@ -417,106 +457,115 @@
       ((TtlParseContext _ _ _ 0 (ParseState "'''multi\nline'''" 0 1 1)))
       ->
       (ok (record (value "multi\nline") (ctx ...))))
-    (let ((q (state-peek (. ctx state)))
-          (mut s (state-advance arena (. ctx state)))
-          (mut result ""))
-      (if (and (== (state-peek s) q) (== (state-peek-n s 1) q))
-        ;; triple-quoted string
-        (do
-          (set! s (state-advance arena s))
-          (set! s (state-advance arena s))
-          (let ((mut done false))
-            (while (and (not done) (not (state-at-end s)))
-              (let ((c (state-peek s)))
-                (cond
-                  ((== c 92)
-                    (let ((esc (parse-escape-sequence arena
-                            (record-new TtlParseContext
-                              (prefixes (. ctx prefixes))
-                              (base-iri (. ctx base-iri))
-                              (blank-labels (. ctx blank-labels))
-                              (blank-counter (. ctx blank-counter))
-                              (state s)))))
-                      (match esc
-                        ((ok er) (do (set! result (string-push-char arena result (. er char)))
-                                     (set! s (. (. er ctx) state))))
-                        ((error e) (do (return (error e)) ())))))
-                  ((and (== c q) (and (== (state-peek-n s 1) q) (== (state-peek-n s 2) q)))
-                    (do
-                      (set! s (state-advance arena s))
-                      (set! s (state-advance arena s))
-                      (set! s (state-advance arena s))
-                      (set! done true)))
-                  (else (do (set! result (string-push-char arena result c))
-                            (set! s (state-advance arena s)))))))
-            (if done
-              (ok (record-new StringResult (value result)
-                (ctx (record-new TtlParseContext
-                  (prefixes (. ctx prefixes))
-                  (base-iri (. ctx base-iri))
-                  (blank-labels (. ctx blank-labels))
-                  (blank-counter (. ctx blank-counter))
-                  (state s)))))
-              (error (make-parse-error arena 'unterminated-string "Unterminated triple-quoted string"
-                (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset))))))))
-          ;; single-quoted string
-          (do
-            (let ((input (. s input))
-                  (len (string-len (. s input)))
-                  (start (. s offset))
-                  (mut scan (. s offset))
-                  (mut fast-done false))
-              (while (and (not fast-done) (< scan len))
-                (let ((c (char-at input scan)))
-                  (cond
-                    ((or (== c 92) (== c 10)) (set! fast-done true))
-                    ((== c q) (set! fast-done true))
-                    (else (set! scan (+ scan 1))))))
-              (if (and (< scan len) (== (char-at input scan) q))
-                (ok (record-new StringResult
-                  (value (substring arena input start (- scan start)))
-                  (ctx (record-new TtlParseContext
-                    (prefixes (. ctx prefixes))
-                    (base-iri (. ctx base-iri))
-                    (blank-labels (. ctx blank-labels))
-                    (blank-counter (. ctx blank-counter))
-                    (state (record-new ParseState
-                      (input input)
-                      (offset (+ scan 1))
-                      (line (. s line))
-                      (column (+ (. s column) (+ (- scan start) 1)))))))))
+    ;; Scan the body once, then build the value with one allocation: a
+    ;; plain substring when there are no escapes, else a decoded copy.
+    (let ((s0 (. ctx state))
+          (q (state-peek s0))
+          (long (and (== (state-peek-n s0 1) q) (== (state-peek-n s0 2) q)))
+          (skip (if long 3 1))
+          (start (+ (. s0 offset) skip))
+          (scan (? (scan-string-body arena
+                     (record-new ParseState
+                       (input (. s0 input))
+                       (offset start)
+                       (line (. s0 line))
+                       (column (+ (. s0 column) skip)))
+                     q long))))
+      (ok (record-new StringResult
+        (value (decode-string-body arena (. s0 input) start (. scan end) (. scan escapes)))
+        (ctx (ctx-with-state ctx (. scan state)))))))
+
+  (fn escape-value ((in c (Int 0 .. 127)))
+    (@intent "The character a string escape \\c stands for, or 0 if c is not a valid escape")
+    (@spec (((Int 0 .. 127)) -> (Int 0 .. 127)))
+    (@pure)
+    (@example (110) -> 10)
+    (@example (34) -> 34)
+    (@example (120) -> 0)
+    (cond
+      ((== c 110) 10)
+      ((== c 116) 9)
+      ((== c 114) 13)
+      ((== c 92) 92)
+      ((== c 34) 34)
+      ((== c 39) 39)
+      (else 0)))
+
+  (fn scan-string-body ((in arena Arena) (in state ParseState) (in q (Int 0 .. 127)) (in long Bool))
+    (@intent "Find the end of a string literal body, counting and validating its escapes")
+    (@spec ((Arena ParseState (Int 0 .. 127) Bool) -> (Result StringScan ParseError)))
+    (@alloc arena)
+    ;; `state` is just past the opening quote(s). Line and column move as
+    ;; state-advance moves them. A raw newline is accepted in short strings
+    ;; too, as the parser always has.
+    (let ((input (. state input))
+          (len (string-len (. state input)))
+          (mut offset (. state offset))
+          (mut line (. state line))
+          (mut column (. state column))
+          (mut escapes 0)
+          (mut end 0)
+          (mut done false))
+      (while (and (not done) (< offset len))
+        (let ((c (char-at input offset)))
+          (cond
+            ((== c 92)
+              (if (== (escape-value (char-at input (+ offset 1))) 0)
+                (return (error (make-parse-error arena 'invalid-escape "Invalid escape sequence"
+                  (record-new Position (line line) (column (+ column 1)) (offset (+ offset 1))))))
                 (do
-                  (let ((mut done false))
-                    (while (and (not done) (not (state-at-end s)))
-                      (let ((c (state-peek s)))
-                        (cond
-                          ((== c 92)
-                            (let ((esc (parse-escape-sequence arena
-                                    (record-new TtlParseContext
-                                      (prefixes (. ctx prefixes))
-                                      (base-iri (. ctx base-iri))
-                                      (blank-labels (. ctx blank-labels))
-                                      (blank-counter (. ctx blank-counter))
-                                      (state s)))))
-                              (match esc
-                                ((ok er) (do (set! result (string-push-char arena result (. er char)))
-                                             (set! s (. (. er ctx) state))))
-                                ((error e) (do (return (error e)) ())))))
-                          ((== c q)
-                            (do (set! s (state-advance arena s))
-                                (set! done true)))
-                          (else (do (set! result (string-push-char arena result c))
-                                    (set! s (state-advance arena s)))))))
-                    (if done
-                      (ok (record-new StringResult (value result)
-                        (ctx (record-new TtlParseContext
-                          (prefixes (. ctx prefixes))
-                          (base-iri (. ctx base-iri))
-                          (blank-labels (. ctx blank-labels))
-                          (blank-counter (. ctx blank-counter))
-                          (state s)))))
-                      (error (make-parse-error arena 'unterminated-string "Unterminated string"
-                        (record-new Position (line (. s line)) (column (. s column)) (offset (. s offset))))))))))))))
+                  (set! escapes (+ escapes 1))
+                  (set! offset (+ offset 2))
+                  (set! column (+ column 2)))))
+            ((and (== c q) (or (not long)
+                               (and (== (char-at input (+ offset 1)) q) (== (char-at input (+ offset 2)) q))))
+              (do
+                (set! end offset)
+                (set! offset (+ offset (if long 3 1)))
+                (set! column (+ column (if long 3 1)))
+                (set! done true)))
+            ((== c 10)
+              (do
+                (set! offset (+ offset 1))
+                (set! line (+ line 1))
+                (set! column 1)))
+            (else
+              (do
+                (set! offset (+ offset 1))
+                (set! column (+ column 1)))))))
+      (if done
+        (ok (record-new StringScan
+          (end end)
+          (escapes escapes)
+          (state (record-new ParseState (input input) (offset offset) (line line) (column column)))))
+        (error (make-parse-error arena 'unterminated-string
+          (if long "Unterminated triple-quoted string" "Unterminated string")
+          (record-new Position (line line) (column column) (offset offset)))))))
+
+  (fn decode-string-body ((in arena Arena) (in input String) (in start (Int 0 ..)) (in end (Int 0 ..)) (in escapes (Int 0 ..)))
+    (@intent "Copy a scanned string literal body out of the input, decoding its escapes, in one allocation")
+    (@spec ((Arena String (Int 0 ..) (Int 0 ..) (Int 0 ..)) -> String))
+    (@alloc arena)
+    (@pre {end >= start})
+    (if (== escapes 0)
+      (substring arena input start (- end start))
+      (let ((out-len (- (- end start) escapes))
+            (buf (arena-alloc arena (+ out-len 1)))
+            (mut i start)
+            (mut j 0))
+        (do
+          (while (< i end)
+            (let ((c (char-at input i)))
+              (do
+                (if (== c 92)
+                  (do
+                    (set! (@ buf j) (cast U8 (escape-value (char-at input (+ i 1)))))
+                    (set! i (+ i 2)))
+                  (do
+                    (set! (@ buf j) (@ (. input data) i))
+                    (set! i (+ i 1))))
+                (set! j (+ j 1)))))
+          (String (cast (Ptr U8) buf) (cast U64 out-len))))))
 
   (fn parse-escape-sequence ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse an escape sequence in a string literal")
@@ -540,18 +589,14 @@
                   (blank-labels (. ctx blank-labels))
                   (blank-counter (. ctx blank-counter))
                   (state s2))))
-            (cond
-              ((== c 110) (ok (record-new EscapeResult (char 10) (ctx new-ctx))))
-              ((== c 116) (ok (record-new EscapeResult (char 9) (ctx new-ctx))))
-              ((== c 114) (ok (record-new EscapeResult (char 13) (ctx new-ctx))))
-              ((== c 92)  (ok (record-new EscapeResult (char 92) (ctx new-ctx))))
-              ((== c 34)  (ok (record-new EscapeResult (char 34) (ctx new-ctx))))
-              ((== c 39)  (ok (record-new EscapeResult (char 39) (ctx new-ctx))))
-              (else (error (make-parse-error arena 'invalid-escape "Invalid escape sequence"
-                (record-new Position
-                  (line (. s1 line))
-                  (column (. s1 column))
-                  (offset (. s1 offset))))))))))))
+            (let ((v (escape-value c)))
+              (if (== v 0)
+                (error (make-parse-error arena 'invalid-escape "Invalid escape sequence"
+                  (record-new Position
+                    (line (. s1 line))
+                    (column (. s1 column))
+                    (offset (. s1 offset)))))
+                (ok (record-new EscapeResult (char v) (ctx new-ctx))))))))))
 
   (fn parse-literal ((in arena Arena) (mut ctx TtlParseContext))
     (@intent "Parse a complete literal with optional datatype or language tag")
@@ -1170,35 +1215,76 @@
           (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))))
       (ok g)))
 
+  (fn scratch-reset ((in scratch Arena))
+    (@intent "Empty a scratch arena for reuse, keeping its first block")
+    (@spec ((Arena) -> Unit))
+    ;; No SLOP builtin resets an arena; `scratch` is the C parameter name.
+    (c-inline "slop_arena_reset(scratch);"))
+
+  (fn parse-directive-any ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse an @prefix/@base directive or a SPARQL-style PREFIX/BASE")
+    (@spec ((Arena TtlParseContext) -> (Result TtlParseContext ParseError)))
+    (@alloc arena)
+    (if (== (state-peek (. ctx state)) 64)
+      (parse-directive arena ctx)
+      (parse-sparql-prefix arena ctx)))
+
+  (fn parse-statement-for-each-triple ((in arena Arena) (mut ctx TtlParseContext) (in callback (Fn (Triple) Unit)))
+    (@intent "Parse one triple statement (subject predicate-object-list .) and emit its triples to a callback")
+    (@spec ((Arena TtlParseContext (Fn (Triple) Unit)) -> (Result StreamTriplesResult ParseError)))
+    (@alloc arena)
+    (let ((sr (? (parse-term-extended arena ctx)))
+          (n-extra (emit-triples (. sr extra-triples) callback))
+          (polr (? (parse-predicate-object-list-for-each-triple arena (. sr ctx) (. sr term) callback)))
+          (s5 (? (expect-char arena (skip-whitespace arena (. (. polr ctx) state)) 46))))
+      (ok (record-new StreamTriplesResult
+        (count (+ n-extra (. polr count)))
+        (ctx (ctx-with-state (. polr ctx) s5))))))
+
+  ;; CALLBACK CONTRACT: a Triple passed to `callback` - its IRI and literal
+  ;; strings, and the Triple behind a triple term - is valid ONLY DURING
+  ;; THAT CALL. Each statement is parsed in a scratch arena that is reset
+  ;; once the statement's triples have been delivered, so a callback that
+  ;; keeps a term must copy its strings. Blank node ids are plain ints and
+  ;; may be kept. Triples arrive in document order: a term's nested
+  ;; triples first, then the triple using it, then its annotations. Blank
+  ;; nodes are numbered from 0 per parse.
   (fn parse-ttl-string-for-each-triple ((in arena Arena) (in input String) (in callback (Fn (Triple) Unit)))
-    (@intent "Parse a Turtle string and emit triples as they are parsed")
+    (@intent "Parse a Turtle string and emit triples as they are parsed; each Triple is valid only during its callback")
     (@spec ((Arena String (Fn (Triple) Unit)) -> (Result (Int 0 ..) ParseError)))
     (@alloc arena)
     (@pre {(string-len input) > 0})
-    (let ((mut ctx (make-ttl-context arena input))
+    ;; `arena` holds what outlives a statement: prefixes, the base IRI and
+    ;; blank labels. Everything else goes in `scratch`, so memory is bounded
+    ;; by the largest statement rather than the document. Errors free
+    ;; `scratch` explicitly: `?` would return without freeing it.
+    (let ((scratch (arena-new 1048576))
+          (mut ctx (make-ttl-context arena input))
           (mut count 0))
-      (let ((mut s (skip-whitespace arena (. ctx state))))
-        (set! ctx (ctx-with-state ctx s))
-        (while (not (state-at-end (. ctx state)))
-          (let ((c (state-peek (. ctx state))))
-            (cond
-              ;; @prefix or @base directive
-              ((== c 64)
-                (set! ctx (? (parse-directive arena ctx))))
-              ;; SPARQL-style PREFIX or BASE
-              ((or (== c 80) (== c 66))
-                (set! ctx (? (parse-sparql-prefix arena ctx))))
-              ;; Triple: subject predicate-object-list .
-              (else
-                (let ((sr (? (parse-term-extended arena ctx))))
-                  (do
-                    (set! count (+ count (emit-triples (. sr extra-triples) callback)))
-                    (let ((polr (? (parse-predicate-object-list-for-each-triple arena (. sr ctx) (. sr term) callback)))
-                          (s5 (? (expect-char arena (skip-whitespace arena (. (. polr ctx) state)) 46))))
-                      (do
-                        (set! count (+ count (. polr count)))
-                        (set! ctx (ctx-with-state (. polr ctx) s5)))))))))
-          (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))))
+      (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state))))
+      (while (not (state-at-end (. ctx state)))
+        (let ((c (state-peek (. ctx state))))
+          (if (or (== c 64) (or (== c 80) (== c 66)))
+            ;; @prefix/@base or SPARQL-style PREFIX/BASE
+            (match (parse-directive-any arena ctx)
+              ((ok next) (set! ctx next))
+              ((error e)
+                (do
+                  (arena-free scratch)
+                  (return (error e)))))
+            ;; Triple: subject predicate-object-list .
+            (match (parse-statement-for-each-triple scratch ctx callback)
+              ((ok r)
+                (do
+                  (set! count (+ count (. r count)))
+                  (set! ctx (. r ctx))
+                  (scratch-reset scratch)))
+              ((error e)
+                (do
+                  (arena-free scratch)
+                  (return (error e)))))))
+        (set! ctx (ctx-with-state ctx (skip-whitespace arena (. ctx state)))))
+      (arena-free scratch)
       (ok count)))
 
   (fn parse-ttl-file ((in arena Arena) (in path String))
@@ -1227,8 +1313,10 @@
                   (error (union-new TtlFileError file-error e)))))))
         ((error e) (error (union-new TtlFileError file-error e))))))
 
+  ;; Same callback contract as parse-ttl-string-for-each-triple: a Triple
+  ;; is valid only during its callback. The file's text is read into `arena`.
   (fn parse-ttl-file-for-each-triple ((in arena Arena) (in path String) (in callback (Fn (Triple) Unit)))
-    (@intent "Parse a Turtle file and emit triples as they are parsed")
+    (@intent "Parse a Turtle file and emit triples as they are parsed; each Triple is valid only during its callback")
     (@spec ((Arena String (Fn (Triple) Unit)) -> (Result (Int 0 ..) TtlFileError)))
     (@alloc arena)
     (@pre {(string-len path) > 0})
