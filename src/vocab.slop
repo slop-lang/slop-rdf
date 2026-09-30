@@ -1,11 +1,11 @@
 (module vocab
-  (@doc "Standard RDF vocabulary IRIs: RDF, RDFS, XSD, OWL, DC, DCTERMS, SKOS, FOAF, GEO, GEOSPARQL, SCHEMA, PROV, SHACL")
+  (@doc "Standard RDF vocabulary IRIs: RDF, RDFS, XSD, OWL, SWRL, DC, DCTERMS, SKOS, FOAF, GEO, GEOSPARQL, SCHEMA, PROV, SHACL")
 
   (export
     ;; RDF namespace
     RDF_NS RDF_TYPE RDF_FIRST RDF_REST RDF_NIL RDF_PROPERTY
     RDF_STATEMENT RDF_SUBJECT RDF_PREDICATE RDF_OBJECT RDF_LIST
-    RDF_LANG_STRING RDF_HTML RDF_XML_LITERAL RDF_PLAIN_LITERAL
+    RDF_LANG_STRING RDF_HTML RDF_XML_LITERAL RDF_PLAIN_LITERAL RDF_LANG_RANGE
     ;; RDFS namespace
     RDFS_NS RDFS_RESOURCE RDFS_CLASS RDFS_LITERAL RDFS_DATATYPE
     RDFS_SUBCLASS_OF RDFS_SUBPROPERTY_OF RDFS_DOMAIN RDFS_RANGE
@@ -44,6 +44,15 @@
     OWL_ONTOLOGY OWL_IMPORTS OWL_VERSION_IRI
     OWL_DEPRECATED OWL_VERSION_INFO OWL_PRIOR_VERSION
     OWL_BACKWARD_COMPATIBLE_WITH OWL_INCOMPATIBLE_WITH
+    OWL_AXIOM OWL_ANNOTATION
+    OWL_ANNOTATED_SOURCE OWL_ANNOTATED_PROPERTY OWL_ANNOTATED_TARGET
+    OWL_DISJOINT_UNION_OF OWL_ON_PROPERTIES
+    OWL_TOP_OBJECT_PROPERTY OWL_BOTTOM_OBJECT_PROPERTY
+    OWL_TOP_DATA_PROPERTY OWL_BOTTOM_DATA_PROPERTY
+    OWL_REAL OWL_RATIONAL
+    OWL_DATA_RANGE OWL_DEPRECATED_CLASS OWL_DEPRECATED_PROPERTY OWL_ONTOLOGY_PROPERTY
+    ;; SWRL namespace (rules in RDF)
+    SWRL_NS SWRL_IMP SWRL_BODY SWRL_HEAD
     ;; DC namespace (Dublin Core Elements)
     DC_NS DC_TITLE DC_CREATOR DC_SUBJECT DC_DESCRIPTION DC_PUBLISHER
     DC_CONTRIBUTOR DC_DATE DC_TYPE DC_FORMAT DC_IDENTIFIER DC_SOURCE
@@ -151,6 +160,8 @@
   (const RDF_HTML String "http://www.w3.org/1999/02/22-rdf-syntax-ns#HTML")
   (const RDF_XML_LITERAL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#XMLLiteral")
   (const RDF_PLAIN_LITERAL String "http://www.w3.org/1999/02/22-rdf-syntax-ns#PlainLiteral")
+  ;; The language-range facet of rdf:PlainLiteral (OWL 2 Structural Specification, section 4)
+  (const RDF_LANG_RANGE String "http://www.w3.org/1999/02/22-rdf-syntax-ns#langRange")
 
   ;; ============================================================================
   ;; RDFS Namespace - http://www.w3.org/2000/01/rdf-schema#
@@ -293,6 +304,36 @@
   (const OWL_PRIOR_VERSION String "http://www.w3.org/2002/07/owl#priorVersion")
   (const OWL_BACKWARD_COMPATIBLE_WITH String "http://www.w3.org/2002/07/owl#backwardCompatibleWith")
   (const OWL_INCOMPATIBLE_WITH String "http://www.w3.org/2002/07/owl#incompatibleWith")
+  ;; Axiom and annotation reification (OWL 2 Mapping to RDF, section 2.3)
+  (const OWL_AXIOM String "http://www.w3.org/2002/07/owl#Axiom")
+  (const OWL_ANNOTATION String "http://www.w3.org/2002/07/owl#Annotation")
+  (const OWL_ANNOTATED_SOURCE String "http://www.w3.org/2002/07/owl#annotatedSource")
+  (const OWL_ANNOTATED_PROPERTY String "http://www.w3.org/2002/07/owl#annotatedProperty")
+  (const OWL_ANNOTATED_TARGET String "http://www.w3.org/2002/07/owl#annotatedTarget")
+  ;; DisjointUnion, and n-ary data restrictions
+  (const OWL_DISJOINT_UNION_OF String "http://www.w3.org/2002/07/owl#disjointUnionOf")
+  (const OWL_ON_PROPERTIES String "http://www.w3.org/2002/07/owl#onProperties")
+  ;; Built-in properties (OWL 2 Structural Specification, reserved vocabulary)
+  (const OWL_TOP_OBJECT_PROPERTY String "http://www.w3.org/2002/07/owl#topObjectProperty")
+  (const OWL_BOTTOM_OBJECT_PROPERTY String "http://www.w3.org/2002/07/owl#bottomObjectProperty")
+  (const OWL_TOP_DATA_PROPERTY String "http://www.w3.org/2002/07/owl#topDataProperty")
+  (const OWL_BOTTOM_DATA_PROPERTY String "http://www.w3.org/2002/07/owl#bottomDataProperty")
+  ;; Built-in datatypes (OWL 2 Structural Specification, section 4)
+  (const OWL_REAL String "http://www.w3.org/2002/07/owl#real")
+  (const OWL_RATIONAL String "http://www.w3.org/2002/07/owl#rational")
+  ;; OWL 1 vocabulary an OWL 2 parser still accepts (Mapping to RDF, section 3)
+  (const OWL_DATA_RANGE String "http://www.w3.org/2002/07/owl#DataRange")
+  (const OWL_DEPRECATED_CLASS String "http://www.w3.org/2002/07/owl#DeprecatedClass")
+  (const OWL_DEPRECATED_PROPERTY String "http://www.w3.org/2002/07/owl#DeprecatedProperty")
+  (const OWL_ONTOLOGY_PROPERTY String "http://www.w3.org/2002/07/owl#OntologyProperty")
+
+  ;; ============================================================================
+  ;; SWRL Namespace - http://www.w3.org/2003/11/swrl#
+  ;; ============================================================================
+  (const SWRL_NS String "http://www.w3.org/2003/11/swrl#")
+  (const SWRL_IMP String "http://www.w3.org/2003/11/swrl#Imp")
+  (const SWRL_BODY String "http://www.w3.org/2003/11/swrl#body")
+  (const SWRL_HEAD String "http://www.w3.org/2003/11/swrl#head")
 
   ;; ============================================================================
   ;; DC Namespace (Dublin Core Elements) - http://purl.org/dc/elements/1.1/
