@@ -1,0 +1,184 @@
+(module test-ttl-stream
+  (@doc "Integration tests for the streaming TTL parser: same triples as the graph parse, in document order, and the callback contract")
+
+  (import rdf (Term Triple Graph triple-eq))
+  (import common (ParseError ParseErrorKind))
+  (import ttl (parse-ttl-string parse-ttl-string-for-each-triple parse-ttl-file parse-ttl-file-for-each-triple TtlFileError))
+  (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Helpers
+  ;; ---------------------------------------------------------------------------
+
+  (type StreamRun (record
+    (texts (Map Int String))
+    (count (Int 0 ..))
+    (failure (Option ParseError))))
+
+  (fn term-text ((in arena Arena) (in t Term))
+    (@intent "A copy of a term's text in arena: IRI or literal value, or _:id for a blank node")
+    (@spec ((Arena Term) -> String))
+    (@alloc arena)
+    (match t
+      ((term-iri iri) (string-concat arena (. iri value) ""))
+      ((term-blank b) (string-concat arena "_:" (int-to-string arena (. b id))))
+      ((term-literal lit) (string-concat arena (. lit value) ""))
+      ((term-triple p) (string-concat arena "<<" (string-concat arena (term-text arena (. (deref p) subject)) ">>")))))
+
+  (fn triple-text ((in arena Arena) (in t Triple))
+    (@intent "A copy of a triple's subject and object text in arena, space separated")
+    (@spec ((Arena Triple) -> String))
+    (@alloc arena)
+    (string-concat arena (term-text arena (. t subject))
+      (string-concat arena " " (term-text arena (. t object)))))
+
+  (fn stream-texts ((in arena Arena) (in input String))
+    (@intent "Stream input, keeping a copy of each triple's text in arena, keyed by arrival order")
+    (@spec ((Arena String) -> StreamRun))
+    (@alloc arena)
+    ;; The callback copies everything it keeps, as the contract requires;
+    ;; the copies are read only after the parse has returned. Counters a
+    ;; closure captures are typed `Int`: an untyped `(mut n 0)` is emitted
+    ;; as a C `int` while the closure's env holds an `int64_t*` to it
+    ;; (slop#236).
+    (let ((texts (map-new arena Int String))
+          (mut n Int 0)
+          (res (parse-ttl-string-for-each-triple arena input
+                 (fn ((t Triple))
+                   (do
+                     (map-put texts n (triple-text arena t))
+                     (set! n (+ n 1)))))))
+      (match res
+        ((ok _) (record-new StreamRun (texts texts) (count n) (failure (none))))
+        ((error e) (record-new StreamRun (texts texts) (count n) (failure (some e)))))))
+
+  (fn text-is ((in run StreamRun) (in index Int) (in expected String))
+    (@intent "True when the triple that arrived at index has the expected text")
+    (@spec ((StreamRun Int String) -> Bool))
+    (match (map-get (. run texts) index)
+      ((some actual) (string-eq actual expected))
+      ((none) false)))
+
+  (fn failure-kind-is ((in run StreamRun) (in kind ParseErrorKind))
+    (@intent "True when the streamed parse failed with the given error kind")
+    (@spec ((StreamRun ParseErrorKind) -> Bool))
+    (match (. run failure)
+      ((some e) (== (. e kind) kind))
+      ((none) false)))
+
+  (fn stream-mismatches ((in arena Arena) (in input String))
+    (@intent "Compare each streamed triple with the graph parse's triple at the same position, during the callback")
+    (@spec ((Arena String) -> Int))
+    (@alloc arena)
+    ;; Each triple is compared inside its callback, while it is valid;
+    ;; triple-eq compares blank node ids too. -1 means a parse failed.
+    (match (parse-ttl-string arena input)
+      ((ok g)
+        (let ((triples (. g triples))
+              (mut idx Int 0)
+              (mut bad Int 0)
+              (res (parse-ttl-string-for-each-triple arena input
+                     (fn ((t Triple))
+                       (do
+                         (match (list-get triples idx)
+                           ((some expected) (when (not (triple-eq expected t)) (set! bad (+ bad 1))))
+                           ((none) (set! bad (+ bad 1))))
+                         (set! idx (+ idx 1)))))))
+          (match res
+            ((ok n) (if (and (== n (list-len triples)) (== idx n)) bad (+ bad 1)))
+            ((error _) -1))))
+      ((error _) -1)))
+
+  (fn file-stream-mismatches ((in arena Arena) (in path String))
+    (@intent "Compare the streaming file parse with the graph file parse, triple by triple in order")
+    (@spec ((Arena String) -> Int))
+    (@alloc arena)
+    (match (parse-ttl-file arena path)
+      ((ok g)
+        (let ((triples (. g triples))
+              (mut idx Int 0)
+              (mut bad Int 0)
+              (res (parse-ttl-file-for-each-triple arena path
+                     (fn ((t Triple))
+                       (do
+                         (match (list-get triples idx)
+                           ((some expected) (when (not (triple-eq expected t)) (set! bad (+ bad 1))))
+                           ((none) (set! bad (+ bad 1))))
+                         (set! idx (+ idx 1)))))))
+          (match res
+            ((ok n) (if (and (== n (list-len triples)) (== idx n)) bad (+ bad 1)))
+            ((error _) -1))))
+      ((error _) -1)))
+
+  ;; ---------------------------------------------------------------------------
+  ;; Tests
+  ;; ---------------------------------------------------------------------------
+
+  (fn main ()
+    (@intent "Run the streaming TTL parser tests")
+    (@spec (() -> Int))
+    (with-arena 4194304
+      (let ((mut s (test-state-new arena)))
+        (println "=== Streaming TTL Parser Tests ===")
+
+        (println "")
+        (println "-- Streaming matches the graph parse --")
+        (set! s (assert-eq-int arena s "Feature document: streamed triples equal graph triples, in order" 0
+          (file-stream-mismatches arena "test_data/stream-features.ttl")))
+        (set! s (assert-eq-int arena s "Small string document: streamed triples equal graph triples, in order" 0
+          (stream-mismatches arena "@prefix ex: <http://e/> .\n[ ex:p ( ex:a [ ex:b _:l ] ) ] ex:q _:l , <<( ex:s ex:p [ ex:r ex:t ] )>> {| ex:by ex:me |} .\n")))
+        (set! s (assert-eq-int arena s "bfo-core.ttl: streamed triples equal graph triples, in order" 0
+          (file-stream-mismatches arena "examples/bfo-core.ttl")))
+        (set! s (assert-eq-int arena s "software_eng.ttl: streamed triples equal graph triples, in order" 0
+          (file-stream-mismatches arena "examples/software_eng.ttl")))
+
+        (println "")
+        (println "-- Callback contract: copies outlive the parse --")
+        (let ((run (stream-texts arena "@prefix ex: <http://example.org/> .\nex:a ex:p \"one\" .\nex:b ex:p \"two\\ttab\" .\nex:c ex:p [ ex:q ex:d ] .\n")))
+          (do
+            (set! s (assert-eq-int arena s "Contract: four triples delivered" 4 (. run count)))
+            (set! s (assert-true arena s "Contract: triple 0 copy intact" (text-is run 0 "http://example.org/a one")))
+            (set! s (assert-true arena s "Contract: triple 1 copy intact" (text-is run 1 "http://example.org/b two\ttab")))
+            (set! s (assert-true arena s "Contract: nested triple arrives before its parent" (text-is run 2 "_:0 http://example.org/d")))
+            (set! s (assert-true arena s "Contract: parent triple copy intact" (text-is run 3 "http://example.org/c _:0")))))
+
+        (println "")
+        (println "-- Blank node numbering --")
+        (let ((run (stream-texts arena "@prefix : <http://e/> .\n_:x :p [ :q ( :a [] ) ] .\n_:x :r _:y .\n[] :s _:y .\n")))
+          (do
+            (set! s (assert-eq-int arena s "Blank ids: eight triples" 8 (. run count)))
+            (set! s (assert-true arena s "Blank ids: first cell" (text-is run 0 "_:2 http://e/a")))
+            (set! s (assert-true arena s "Blank ids: second cell holds empty []" (text-is run 1 "_:4 _:3")))
+            (set! s (assert-true arena s "Blank ids: rest link after second cell's first" (text-is run 2 "_:2 _:4")))
+            (set! s (assert-true arena s "Blank ids: list ends in nil" (text-is run 3 "_:4 http://www.w3.org/1999/02/22-rdf-syntax-ns#nil")))
+            (set! s (assert-true arena s "Blank ids: [ ] node points at the list" (text-is run 4 "_:1 _:2")))
+            (set! s (assert-true arena s "Blank ids: labelled subject is 0" (text-is run 5 "_:0 _:1")))
+            (set! s (assert-true arena s "Blank ids: label reused across statements" (text-is run 6 "_:0 _:5")))
+            (set! s (assert-true arena s "Blank ids: anonymous subject shares the counter" (text-is run 7 "_:6 _:5")))))
+
+        (println "")
+        (println "-- Literals and prefixed names --")
+        (let ((run (stream-texts arena "@prefix ex: <http://e/> .\nex:s ex:p \"a\\tb\\nc\\rd\\\\e\\\"f\\'g\" .\nex:s ex:p '''x\ny \"q\" ''z'' \\n''' .\nex:s ex:p \"raw\nnewline\" .\nex:s ex:p ex: .\nex:s ex:p ex:a.b.c .\nex:s ex:p \"\" .\nex:s ex:p \"\"\"\"\"\" .\n")))
+          (do
+            (set! s (assert-eq-int arena s "Literals: seven triples" 7 (. run count)))
+            (set! s (assert-true arena s "Literals: every escape decoded" (text-is run 0 "http://e/s a\tb\nc\rd\\e\"f'g")))
+            (set! s (assert-true arena s "Literals: long string keeps newlines, quotes, and decodes escapes" (text-is run 1 "http://e/s x\ny \"q\" ''z'' \n")))
+            (set! s (assert-true arena s "Literals: raw newline in a short string" (text-is run 2 "http://e/s raw\nnewline")))
+            (set! s (assert-true arena s "Prefixed: empty local part is the namespace" (text-is run 3 "http://e/s http://e/")))
+            (set! s (assert-true arena s "Prefixed: dots inside the local part" (text-is run 4 "http://e/s http://e/a.b.c")))
+            (set! s (assert-true arena s "Literals: empty short string" (text-is run 5 "http://e/s ")))
+            (set! s (assert-true arena s "Literals: empty long string" (text-is run 6 "http://e/s ")))))
+
+        (println "")
+        (println "-- Errors --")
+        (let ((run (stream-texts arena "@prefix ex: <http://e/> .\nex:a ex:p ex:b .\nex:c ex:p \"bad\\q\" .\nex:d ex:p ex:e .\n")))
+          (do
+            (set! s (assert-true arena s "Error: invalid escape reported" (failure-kind-is run 'invalid-escape)))
+            (set! s (assert-eq-int arena s "Error: triples before the error were delivered" 1 (. run count)))))
+        (let ((run (stream-texts arena "@prefix ex: <http://e/> .\nex:a ex:p \"\"\"never closed .\n")))
+          (set! s (assert-true arena s "Error: unterminated long string reported" (failure-kind-is run 'unterminated-string))))
+        (let ((run (stream-texts arena "@prefix ex: <http://e/> .\nex:a ex:p nope:b .\n")))
+          (set! s (assert-true arena s "Error: unknown prefix reported" (failure-kind-is run 'unknown-prefix))))
+
+        (test-summary arena s)
+        0))))

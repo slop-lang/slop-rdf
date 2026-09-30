@@ -1,0 +1,20 @@
+# Every construct the streaming Turtle parser handles, in one document.
+# test/test-ttl-stream.slop checks that streaming it yields exactly the
+# graph parse's triples, in the same order, with the same blank node ids.
+@prefix ex: <http://example.org/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+ex:alice a foaf:Person ;
+  foaf:name "Alice"@en , 'Al' ;
+  ex:age 42 ; ex:height 1.75 ; ex:mass 6.1e1 ; ex:ok true ; ex:no false ;
+  ex:note "tab\there\nnew \"quoted\" back\\slash \'single\'" ;
+  ex:long """multi
+line "q" with \t escape""" , '''single ''long'' '''  ;
+  ex:typed "7"^^xsd:integer , "8"^^<http://www.w3.org/2001/XMLSchema#long> ;
+  ex:empty ex: ; ex:dotted ex:a.b.c .
+[ ex:p [ ex:q ex:r ] ; ex:s [] ] ex:t ( ex:x [ ex:y ex:z ] ( ) ( ex:w ) ) .
+_:shared ex:knows _:other .
+_:other ex:knows _:shared , [ ex:deep ( [ ex:deeper _:shared ] ) ] .
+ex:s ex:claims <<( ex:a ex:b [ ex:c ex:d ] )>> .
+ex:s ex:p ex:o {| ex:source ex:x |} {| ex:source ex:y ; ex:when "now" |} .
+ex:list ex:has () .
