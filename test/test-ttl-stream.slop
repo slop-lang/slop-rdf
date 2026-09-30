@@ -39,7 +39,8 @@
     ;; The callback copies everything it keeps, as the contract requires;
     ;; the copies are read only after the parse has returned. Counters a
     ;; closure captures are typed `Int`: an untyped `(mut n 0)` is emitted
-    ;; as a C `int` while the closure's env holds an `int64_t*` to it.
+    ;; as a C `int` while the closure's env holds an `int64_t*` to it
+    ;; (slop#236).
     (let ((texts (map-new arena Int String))
           (mut n Int 0)
           (res (parse-ttl-string-for-each-triple arena input
