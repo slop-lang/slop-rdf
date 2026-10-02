@@ -46,6 +46,31 @@
           ((error e)
             (set! s (assert-true arena s "Plain literal: parse should succeed" false)))))
 
+      ;; Test a literal holding UTF-8: bytes of 128 and up are not ASCII. A
+      ;; character used to be typed (Int 0 .. 127), so once slop checks range
+      ;; types (slop#265) the parser aborted on the first such byte.
+      (println "")
+      (println "-- String Literal (UTF-8) --")
+      (let ((result (parse-ttl-string arena "<http://example.org/s> <http://example.org/p> \"café — naïve\" .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "UTF-8 literal: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "UTF-8 literal: parse should succeed" false)))))
+
+      ;; ... and a prefixed name with UTF-8 in its local part, which reached the
+      ;; (Int 0 .. 127) lookahead and aborted on its first byte. The parser
+      ;; does not accept non-ASCII local names yet, so the point here is that it
+      ;; returns, with either result, instead of aborting.
+      (println "")
+      (println "-- Prefixed Name (UTF-8) --")
+      (let ((result (parse-ttl-string arena "@prefix ex: <http://example.org/> .\nex:café ex:p ex:o .")))
+        (match result
+          ((ok g)
+            (set! s (assert-true arena s "UTF-8 prefixed name: parser returns" true)))
+          ((error e)
+            (set! s (assert-true arena s "UTF-8 prefixed name: parser returns" true)))))
+
       ;; Test typed literal (^^)
       (println "")
       (println "-- Typed Literal (^^) --")
