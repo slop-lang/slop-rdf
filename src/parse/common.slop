@@ -100,7 +100,7 @@
 
   (fn state-peek ((in state ParseState))
     (@intent "Peek at current character without consuming, returns 0 at end")
-    (@spec ((ParseState) -> (Int 0 .. 127)))
+    (@spec ((ParseState) -> (Int 0 .. 255)))
     (@pure)
     (@post (or (state-at-end state) {$result == (char-at (. state input) (. state offset))}))
     (@post (or (not (state-at-end state)) {$result == 0}))
@@ -110,7 +110,7 @@
 
   (fn state-peek-n ((in state ParseState) (in n (Int 0 ..)))
     (@intent "Peek at character n positions ahead, returns 0 if out of bounds")
-    (@spec ((ParseState (Int 0 ..)) -> (Int 0 .. 127)))
+    (@spec ((ParseState (Int 0 ..)) -> (Int 0 .. 255)))
     (@pure)
     (@example ((ParseState "abc" 0 1 1) 2) -> 99)
     (@example ((ParseState "abc" 1 1 2) 5) -> 0)
@@ -215,9 +215,9 @@
   ;; Character expectations
   ;; ---------------------------------------------------------------------------
 
-  (fn expect-char ((in arena Arena) (mut state ParseState) (in expected (Int 0 .. 127)))
+  (fn expect-char ((in arena Arena) (mut state ParseState) (in expected (Int 0 .. 255)))
     (@intent "Consume expected character or return error")
-    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseState ParseError)))
+    (@spec ((Arena ParseState (Int 0 .. 255)) -> (Result ParseState ParseError)))
     (@alloc arena)
     (@example ((ParseState "abc" 0 1 1) 97) -> (ok (ParseState "abc" 1 1 2)))
     (if (state-at-end state)
@@ -232,9 +232,9 @@
   ;; Character sequence parsing
   ;; ---------------------------------------------------------------------------
 
-  (fn parse-while ((in arena Arena) (mut state ParseState) (in predicate (Fn ((Int 0 .. 127)) -> Bool)))
+  (fn parse-while ((in arena Arena) (mut state ParseState) (in predicate (Fn ((Int 0 .. 255)) -> Bool)))
     (@intent "Parse characters while predicate returns true, return collected string")
-    (@spec ((Arena ParseState (Fn ((Int 0 .. 127)) -> Bool)) -> ParseWhileResult))
+    (@spec ((Arena ParseState (Fn ((Int 0 .. 255)) -> Bool)) -> ParseWhileResult))
     (@alloc arena)
     (let ((input (. state input))
           (len (string-len (. state input)))
@@ -255,9 +255,9 @@
         (result (substring arena input start (- offset start)))
         (state (state-with-position state offset line column)))))
 
-  (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 127)))
+  (fn parse-until ((in arena Arena) (mut state ParseState) (in terminator (Int 0 .. 255)))
     (@intent "Parse characters until terminator is found")
-    (@spec ((Arena ParseState (Int 0 .. 127)) -> (Result ParseWhileResult ParseError)))
+    (@spec ((Arena ParseState (Int 0 .. 255)) -> (Result ParseWhileResult ParseError)))
     (@alloc arena)
     (let ((input (. state input))
           (len (string-len (. state input)))
