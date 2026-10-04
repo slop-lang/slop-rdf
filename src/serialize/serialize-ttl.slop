@@ -56,9 +56,9 @@
   ;; String escaping
   ;; ---------------------------------------------------------------------------
 
-  (fn escape-string-char ((in arena Arena) (in c (Int 0 .. 127)))
+  (fn escape-string-char ((in arena Arena) (in c (Int 0 .. 255)))
     (@intent "Escape a single character for Turtle string output")
-    (@spec ((Arena (Int 0 .. 127)) -> String))
+    (@spec ((Arena (Int 0 .. 255)) -> String))
     (@alloc arena)
     (@pure)
     (cond

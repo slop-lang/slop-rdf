@@ -82,7 +82,7 @@
     (state ParseState)))
 
   (type EscapeResult (record
-    (char (Int 0 .. 127))
+    (char (Int 0 .. 255))
     (ctx TtlParseContext)))
 
   (type TripleResult (record
@@ -475,9 +475,9 @@
         (value (decode-string-body arena (. s0 input) start (. scan end) (. scan escapes)))
         (ctx (ctx-with-state ctx (. scan state)))))))
 
-  (fn escape-value ((in c (Int 0 .. 127)))
+  (fn escape-value ((in c (Int 0 .. 255)))
     (@intent "The character a string escape \\c stands for, or 0 if c is not a valid escape")
-    (@spec (((Int 0 .. 127)) -> (Int 0 .. 127)))
+    (@spec (((Int 0 .. 255)) -> (Int 0 .. 255)))
     (@pure)
     (@example (110) -> 10)
     (@example (34) -> 34)
@@ -491,9 +491,9 @@
       ((== c 39) 39)
       (else 0)))
 
-  (fn scan-string-body ((in arena Arena) (in state ParseState) (in q (Int 0 .. 127)) (in long Bool))
+  (fn scan-string-body ((in arena Arena) (in state ParseState) (in q (Int 0 .. 255)) (in long Bool))
     (@intent "Find the end of a string literal body, counting and validating its escapes")
-    (@spec ((Arena ParseState (Int 0 .. 127) Bool) -> (Result StringScan ParseError)))
+    (@spec ((Arena ParseState (Int 0 .. 255) Bool) -> (Result StringScan ParseError)))
     (@alloc arena)
     ;; `state` is just past the opening quote(s). Line and column move as
     ;; state-advance moves them. A raw newline is accepted in short strings
@@ -1341,18 +1341,18 @@
   ;; Character classification helpers for Turtle grammar
   ;; ---------------------------------------------------------------------------
 
-  (fn is-pn-chars-base ((in c (Int 0 .. 127)))
+  (fn is-pn-chars-base ((in c (Int 0 .. 255)))
     (@intent "Check if character is valid as first char of prefix/local name")
-    (@spec (((Int 0 .. 127)) -> Bool))
+    (@spec (((Int 0 .. 255)) -> Bool))
     (@pure)
     (@example (97) -> true)
     (@example (65) -> true)
     (@example (48) -> false)
     (is-alpha c))
 
-  (fn is-pn-chars ((in c (Int 0 .. 127)))
+  (fn is-pn-chars ((in c (Int 0 .. 255)))
     (@intent "Check if character is valid in prefix/local name body")
-    (@spec (((Int 0 .. 127)) -> Bool))
+    (@spec (((Int 0 .. 255)) -> Bool))
     (@pure)
     (@example (97) -> true)
     (@example (48) -> true)
