@@ -385,8 +385,13 @@
                       (match pg-idx
                         ((some pidx)
                           ;; Predicate group exists; add object
+                          ;; pg is a copy of the group: grow a mut copy and
+                          ;; write it back, or the push is lost
                           (match (list-get (. sg pred-groups) pidx)
-                            ((some pg) (list-push (. pg objects) obj))
+                            ((some pg)
+                              (let ((mut grown pg))
+                                (list-push (. grown objects) obj)
+                                (list-set (. sg pred-groups) pidx grown)))
                             ((none) (do))))
                         ((none)
                           ;; New predicate for this subject
@@ -396,7 +401,11 @@
                                     (let ((ol (list-new arena Term)))
                                       (list-push ol obj)
                                       ol))))))
-                            (list-push (. sg pred-groups) new-pg))))))
+                            ;; sg is a copy of the subject group: grow a mut
+                            ;; copy and write it back into groups
+                            (let ((mut grown sg))
+                              (list-push (. grown pred-groups) new-pg)
+                              (list-set groups idx grown)))))))
                   ((none) (do))))
               ((none)
                 ;; New subject
