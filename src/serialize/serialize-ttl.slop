@@ -391,7 +391,8 @@
                             ((some pg)
                               (let ((mut grown pg))
                                 (list-push (. grown objects) obj)
-                                (list-set (. sg pred-groups) pidx grown)))
+                                (list-set (. sg pred-groups) pidx grown)
+                                (do)))
                             ((none) (do))))
                         ((none)
                           ;; New predicate for this subject
@@ -405,7 +406,8 @@
                             ;; copy and write it back into groups
                             (let ((mut grown sg))
                               (list-push (. grown pred-groups) new-pg)
-                              (list-set groups idx grown)))))))
+                              (list-set groups idx grown)
+                              (do)))))))
                   ((none) (do))))
               ((none)
                 ;; New subject
