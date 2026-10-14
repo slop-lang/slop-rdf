@@ -179,6 +179,18 @@
           (set! s (assert-true arena s "Error: unterminated long string reported" (failure-kind-is run 'unterminated-string))))
         (let ((run (stream-texts arena "@prefix ex: <http://e/> .\nex:a ex:p nope:b .\n")))
           (set! s (assert-true arena s "Error: unknown prefix reported" (failure-kind-is run 'unknown-prefix))))
+        (let ((run (stream-texts arena "1 <http://p> <http://o> .\n")))
+          (set! s (assert-true arena s "Error: literal subject reported as syntax-error" (failure-kind-is run 'syntax-error))))
+
+        (println "")
+        (println "-- Dotted prefix and blank label (issue #13) --")
+        (let ((run (stream-texts arena "@prefix j.0: <http://example.org/> .\n@prefix owl: <http://www.w3.org/2002/07/owl#> .\nj.0:A a owl:Class ; <http://example.org/sub> _:b.1 .\n_:b.1 a owl:Restriction ; owl:onProperty j.0:p .\n")))
+          (do
+            (set! s (assert-eq-int arena s "Dots: four triples" 4 (. run count)))
+            (set! s (assert-true arena s "Dots: j.0:A expands" (text-is run 0 "http://example.org/A http://www.w3.org/2002/07/owl#Class")))
+            (set! s (assert-true arena s "Dots: _:b.1 kept whole as object" (text-is run 1 "http://example.org/A _:0")))
+            (set! s (assert-true arena s "Dots: _:b.1 is the same node as subject" (text-is run 2 "_:0 http://www.w3.org/2002/07/owl#Restriction")))
+            (set! s (assert-true arena s "Dots: object prefixed name after dotted label" (text-is run 3 "_:0 http://example.org/p")))))
 
         (test-summary arena s)
         0))))

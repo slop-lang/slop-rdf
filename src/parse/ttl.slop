@@ -27,7 +27,7 @@
     parse-triple
     parse-directive)
 
-  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-triple-term make-graph graph-add-unchecked))
+  (import rdf (Term Triple Graph IRI Literal BlankNode make-iri make-blank make-literal make-triple make-triple-term make-graph graph-add-unchecked term-kind))
   (import common (ParseState ParseError ParseErrorKind Position ParseWhileResult make-parse-error make-parse-state state-advance state-peek state-peek-n state-at-end skip-whitespace expect-char parse-while parse-until))
   (import file (file-open file-read-all file-close FileMode FileError))
   (import strlib (trim starts-with contains index-of substring char-at is-space is-alpha is-digit is-alnum))
@@ -254,21 +254,44 @@
     ;; long as the input does.
     (String (+ (. input data) start) (cast U64 len)))
 
-  (fn scan-pn-chars ((in state ParseState))
-    (@intent "Advance over prefix/label name characters without collecting them")
+  (fn scan-pn-name ((in state ParseState))
+    (@intent "Advance over a prefix name or blank-node label: PN_CHARS or '.', never ending in '.'")
     (@spec ((ParseState) -> ParseState))
     (@pure)
-    ;; is-pn-chars never matches a newline, so only the column moves.
+    (@example ((ParseState "j.0: x" 0 1 1)) -> (ParseState "j.0: x" 3 1 4))
+    (@example ((ParseState "b. " 0 1 1)) -> (ParseState "b. " 1 1 2))
+    (@example ((ParseState ": x" 0 1 1)) -> (ParseState ": x" 0 1 1))
+    ;; Greedy over PN_CHARS | '.', keeping `end` at the last PN_CHARS, so
+    ;; `_:b.` leaves the statement's '.' and `j.0` keeps its interior dot.
+    ;; Neither matches a newline, so only the column moves.
     (let ((input (. state input))
           (len (string-len (. state input)))
-          (mut offset (. state offset)))
-      (while (and (< offset len) (is-pn-chars (char-at input offset)))
-        (set! offset (+ offset 1)))
+          (mut offset (. state offset))
+          (mut end (. state offset))
+          (mut done false))
+      (while (and (not done) (< offset len))
+        (let ((c (char-at input offset)))
+          (cond
+            ((is-pn-chars c)
+              (do
+                (set! offset (+ offset 1))
+                (set! end offset)))
+            ((== c 46) (set! offset (+ offset 1)))
+            (else (set! done true)))))
       (record-new ParseState
         (input input)
-        (offset offset)
+        (offset end)
         (line (. state line))
-        (column (+ (. state column) (- offset (. state offset)))))))
+        (column (+ (. state column) (- end (. state offset)))))))
+
+  (fn parse-pn-name ((in arena Arena) (in state ParseState))
+    (@intent "Collect a prefix name or blank-node label, allowing interior dots")
+    (@spec ((Arena ParseState) -> ParseWhileResult))
+    (@alloc arena)
+    (let ((s1 (scan-pn-name state)))
+      (record-new ParseWhileResult
+        (result (substring arena (. state input) (. state offset) (- (. s1 offset) (. state offset))))
+        (state s1))))
 
   (fn concat-base-slice ((in arena Arena) (in base String) (in input String) (in start (Int 0 ..)) (in len (Int 0 ..)))
     (@intent "Concatenate base with len bytes of input from start, in a single allocation")
@@ -365,7 +388,7 @@
     ;; The prefix is looked up through a view of the input and the IRI is
     ;; built straight from the input, so this allocates only the IRI.
     (let ((s0 (. ctx state))
-          (s1 (scan-pn-chars s0))
+          (s1 (scan-pn-name s0))
           (s2 (? (expect-char arena s1 58)))
           (s3 (scan-pn-local s2))
           (input (. s0 input))
@@ -414,7 +437,7 @@
         ;; is looked up through a view of the input; only a new label is
         ;; copied, into the table's long-lived arena.
         (let ((s3 (? (expect-char arena (state-advance arena (. ctx state)) 58)))
-              (s4 (scan-pn-chars s3))
+              (s4 (scan-pn-name s3))
               (label (input-slice (. s3 input) (. s3 offset) (- (. s4 offset) (. s3 offset))))
               (tbl (. ctx blank-labels)))
           (match (map-get (. tbl ids) label)
@@ -892,6 +915,24 @@
               (extra-triples (list-new arena Triple))
               (ctx (. tr ctx)))))))))
 
+  (fn parse-subject ((in arena Arena) (mut ctx TtlParseContext))
+    (@intent "Parse a statement subject: an IRI, blank node or collection, never a literal")
+    (@spec ((Arena TtlParseContext) -> (Result TermTriplesResult ParseError)))
+    (@alloc arena)
+    ;; Turtle: subject ::= iri | BlankNode | collection. Without this a
+    ;; literal where a subject belongs - `1 a owl:Restriction .` after a
+    ;; mis-split blank label - was accepted and produced wrong triples.
+    (let ((s0 (. ctx state))
+          (sr (? (parse-term-extended arena ctx)))
+          (kind (term-kind (. sr term))))
+      (if (or (== kind 'literal) (== kind 'triple))
+        (error (make-parse-error arena 'syntax-error "Subject must be an IRI, blank node or collection"
+          (record-new Position
+            (line (. s0 line))
+            (column (. s0 column))
+            (offset (. s0 offset)))))
+        (ok sr))))
+
   ;; ---------------------------------------------------------------------------
   ;; Directive parsing
   ;; ---------------------------------------------------------------------------
@@ -911,7 +952,7 @@
           (s2 (skip-whitespace arena (. kw state))))
       (if (starts-with keyword "prefix")
         ;; @prefix name: <iri> .
-        (let ((prefix-name (parse-while arena s2 is-pn-chars))
+        (let ((prefix-name (parse-pn-name arena s2))
               (s4 (? (expect-char arena (. prefix-name state) 58)))
               (ir (? (parse-iri-ref arena (ctx-with-state ctx (skip-whitespace arena s4)))))
               (s8 (? (expect-char arena (skip-whitespace arena (. (. ir ctx) state)) 46))))
@@ -937,7 +978,7 @@
     (@alloc arena)
     (let ((kw (parse-while arena (. ctx state) is-pn-chars-base))
           (s1 (skip-whitespace arena (. kw state)))
-          (prefix-name (parse-while arena s1 is-pn-chars))
+          (prefix-name (parse-pn-name arena s1))
           (s3 (? (expect-char arena (. prefix-name state) 58)))
           (ir (? (parse-iri-ref arena (ctx-with-state ctx (skip-whitespace arena s3))))))
       (ok (record-new TtlParseContext
@@ -1204,7 +1245,7 @@
                 (set! ctx (? (parse-sparql-prefix arena ctx))))
               ;; Triple: subject predicate-object-list .
               (else
-                (let ((sr (? (parse-term-extended arena ctx))))
+                (let ((sr (? (parse-subject arena ctx))))
                   (do
                     (set! g (graph-add-all arena g (. sr extra-triples)))
                     (let ((polr (? (parse-predicate-object-list-into-graph arena (. sr ctx) g (. sr term))))
@@ -1233,7 +1274,7 @@
     (@intent "Parse one triple statement (subject predicate-object-list .) and emit its triples to a callback")
     (@spec ((Arena TtlParseContext (Fn (Triple) Unit)) -> (Result StreamTriplesResult ParseError)))
     (@alloc arena)
-    (let ((sr (? (parse-term-extended arena ctx)))
+    (let ((sr (? (parse-subject arena ctx)))
           (n-extra (emit-triples (. sr extra-triples) callback))
           (polr (? (parse-predicate-object-list-for-each-triple arena (. sr ctx) (. sr term) callback)))
           (s5 (? (expect-char arena (skip-whitespace arena (. (. polr ctx) state)) 46))))
