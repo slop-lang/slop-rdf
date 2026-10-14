@@ -5,6 +5,7 @@
     (Term Graph make-iri make-blank make-literal make-triple
      graph-size graph-contains graph-match))
   (import ttl (parse-ttl-string parse-ttl-file TtlFileError))
+  (import common (ParseError ParseErrorKind))
   (import test-utils (TestState test-state-new assert-true assert-eq-int test-summary))
 
   (fn main ()
@@ -230,6 +231,79 @@
             (set! s (assert-eq-int arena s "Prefix digits: graph size is 1" 1 (graph-size g))))
           ((error e)
             (set! s (assert-true arena s "Prefix digits: parse should succeed" false)))))
+
+      ;; Issue #13: a prefix name may hold interior dots (PN_PREFIX), as in
+      ;; rdflib's `j.0:`. Dots are only barred as the last character.
+      (println "")
+      (println "-- Prefix With Dot --")
+      (let ((result (parse-ttl-string arena "@prefix j.0: <http://example.org/> .\nj.0:A <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-eq-int arena s "Prefix dot: graph size is 1" 1 (graph-size g)))
+              (let ((m (graph-match arena g (some (make-iri arena "http://example.org/A")) (none) (none))))
+                (set! s (assert-eq-int arena s "Prefix dot: j.0:A expands to the bound namespace" 1 (graph-size m))))))
+          ((error e)
+            (set! s (assert-true arena s "Prefix dot: parse should succeed" false)))))
+      (let ((result (parse-ttl-string arena "PREFIX a.b: <http://example.org/>\na.b:x <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-eq-int arena s "SPARQL PREFIX dot: graph size is 1" 1 (graph-size g))))
+          ((error e)
+            (set! s (assert-true arena s "SPARQL PREFIX dot: parse should succeed" false)))))
+      (let ((result (parse-ttl-string arena "@prefix a.: <http://example.org/> .\na.:x <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-true arena s "Prefix ending in dot: parse should fail" false)))
+          ((error e)
+            (set! s (assert-true arena s "Prefix ending in dot: parse should fail" true)))))
+
+      ;; Issue #13: a blank-node label may hold interior dots too. `_:b.1`
+      ;; used to be cut at the dot, and the leftover `1` became the next
+      ;; statement's subject.
+      (println "")
+      (println "-- Blank Node Label With Dot --")
+      (let ((result (parse-ttl-string arena "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n<http://example.org/A> a owl:Class ; rdfs:subClassOf _:b.1 .\n_:b.1 a owl:Restriction ; owl:onProperty <http://example.org/p> ; owl:someValuesFrom owl:Thing .\n<http://example.org/p> a owl:ObjectProperty .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-eq-int arena s "Label dot: graph size is 6" 6 (graph-size g)))
+              (let ((m (graph-match arena g (some (make-blank arena 0)) (none) (none))))
+                (set! s (assert-eq-int arena s "Label dot: _:b.1 is one node with 3 triples" 3 (graph-size m))))))
+          ((error e)
+            (set! s (assert-true arena s "Label dot: parse should succeed" false)))))
+      (let ((result (parse-ttl-string arena "_:a <http://p> _:b.\n_:b <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (do
+              (set! s (assert-eq-int arena s "Label before dot: graph size is 2" 2 (graph-size g)))
+              (let ((m (graph-match arena g (some (make-blank arena 1)) (none) (none))))
+                (set! s (assert-eq-int arena s "Label before dot: _:b stops before the statement dot" 1 (graph-size m))))))
+          ((error e)
+            (set! s (assert-true arena s "Label before dot: parse should succeed" false)))))
+
+      ;; Issue #13: subject ::= iri | BlankNode | collection, so a literal
+      ;; in subject position is a parse error, not a triple.
+      (println "")
+      (println "-- Literal Subject Rejected --")
+      (let ((result (parse-ttl-string arena "\"x\" <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-true arena s "String subject: parse should fail" false)))
+          ((error e)
+            (set! s (assert-true arena s "String subject: syntax-error reported" (== (. e kind) 'syntax-error))))))
+      (let ((result (parse-ttl-string arena "1 <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-true arena s "Numeric subject: parse should fail" false)))
+          ((error e)
+            (set! s (assert-true arena s "Numeric subject: syntax-error reported" (== (. e kind) 'syntax-error))))))
+      (let ((result (parse-ttl-string arena "true <http://p> <http://o> .")))
+        (match result
+          ((ok g)
+            (set! s (assert-true arena s "Boolean subject: parse should fail" false)))
+          ((error e)
+            (set! s (assert-true arena s "Boolean subject: syntax-error reported" (== (. e kind) 'syntax-error))))))
 
       ;; Test RDF collection
       (println "")
