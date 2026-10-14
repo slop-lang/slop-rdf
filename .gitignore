@@ -6,3 +6,5 @@ build/
 /.moosedev/*
 !/.moosedev/kg.nq
 .mcp.json
+/.env
+/.claude
